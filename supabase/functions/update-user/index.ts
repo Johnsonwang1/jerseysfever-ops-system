@@ -7,13 +7,11 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req: Request) => {
-  // 处理 CORS 预检请求
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // 获取请求者的 JWT
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -22,14 +20,13 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 创建 Supabase 客户端（使用请求者的 token）
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    // 验证请求者是否为管理员
+    // 验证请求者身份
     const { data: { user: requestUser }, error: userError } = await supabaseClient.auth.getUser();
     if (userError || !requestUser) {
       return new Response(
@@ -38,7 +35,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 检查请求者是否为管理员
+    // 检查是否为管理员
     const { data: requestProfile } = await supabaseClient
       .from('user_profiles')
       .select('role')
@@ -47,52 +44,75 @@ Deno.serve(async (req: Request) => {
 
     if (!requestProfile || requestProfile.role !== 'admin') {
       return new Response(
-        JSON.stringify({ error: '权限不足，只有管理员可以创建用户' }),
+        JSON.stringify({ error: '权限不足，只有管理员可以更新用户' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 获取请求参数
-    const { email, password, name, role } = await req.json();
+    const { userId, email, name, role, password } = await req.json();
 
-    if (!email || !password || !name) {
+    if (!userId) {
       return new Response(
-        JSON.stringify({ error: '缺少必要参数' }),
+        JSON.stringify({ error: '缺少用户 ID' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 使用 service role 客户端创建用户
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // 创建 auth 用户
-    const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true, // 自动确认邮箱
-      user_metadata: { name, role: role || 'viewer' }
-    });
+    // 更新 auth.users（邮箱和密码）
+    const authUpdates: { email?: string; password?: string } = {};
+    if (email) authUpdates.email = email;
+    if (password) authUpdates.password = password;
 
-    if (createError) {
+    if (Object.keys(authUpdates).length > 0) {
+      const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
+        userId,
+        authUpdates
+      );
+
+      if (authError) {
+        return new Response(
+          JSON.stringify({ error: authError.message }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // 更新 user_profiles
+    const profileUpdates: { name?: string; role?: string; email?: string; updated_at: string } = {
+      updated_at: new Date().toISOString()
+    };
+    if (name) profileUpdates.name = name;
+    if (role) profileUpdates.role = role;
+    if (email) profileUpdates.email = email;
+
+    const { error: profileError } = await supabaseAdmin
+      .from('user_profiles')
+      .update(profileUpdates)
+      .eq('id', userId);
+
+    if (profileError) {
       return new Response(
-        JSON.stringify({ error: createError.message }),
+        JSON.stringify({ error: profileError.message }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     return new Response(
-      JSON.stringify({ success: true, user: newUser.user }),
+      JSON.stringify({ success: true }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : '创建用户失败' }),
+      JSON.stringify({ error: error instanceof Error ? error.message : '更新用户失败' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+
 

@@ -7,11 +7,13 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req: Request) => {
+  // 处理 CORS 预检请求
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
+    // 获取请求者的 JWT
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -20,13 +22,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // 创建 Supabase 客户端（使用请求者的 token）
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    // 验证请求者身份
+    // 验证请求者是否为管理员
     const { data: { user: requestUser }, error: userError } = await supabaseClient.auth.getUser();
     if (userError || !requestUser) {
       return new Response(
@@ -35,7 +38,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 检查是否为管理员
+    // 检查请求者是否为管理员
     const { data: requestProfile } = await supabaseClient
       .from('user_profiles')
       .select('role')
@@ -44,12 +47,13 @@ Deno.serve(async (req: Request) => {
 
     if (!requestProfile || requestProfile.role !== 'admin') {
       return new Response(
-        JSON.stringify({ error: '权限不足，只有管理员可以更新用户' }),
+        JSON.stringify({ error: '权限不足，只有管理员可以删除用户' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const { userId, email, name, role, password } = await req.json();
+    // 获取要删除的用户 ID
+    const { userId } = await req.json();
 
     if (!userId) {
       return new Response(
@@ -58,46 +62,26 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // 不能删除自己
+    if (userId === requestUser.id) {
+      return new Response(
+        JSON.stringify({ error: '不能删除自己的账号' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 使用 service role 客户端删除用户
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // 更新 auth.users（邮箱和密码）
-    const authUpdates: { email?: string; password?: string } = {};
-    if (email) authUpdates.email = email;
-    if (password) authUpdates.password = password;
+    // 删除 auth 用户（会自动级联删除 user_profiles）
+    const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(userId);
 
-    if (Object.keys(authUpdates).length > 0) {
-      const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
-        userId,
-        authUpdates
-      );
-
-      if (authError) {
-        return new Response(
-          JSON.stringify({ error: authError.message }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-
-    // 更新 user_profiles
-    const profileUpdates: { name?: string; role?: string; email?: string; updated_at: string } = {
-      updated_at: new Date().toISOString()
-    };
-    if (name) profileUpdates.name = name;
-    if (role) profileUpdates.role = role;
-    if (email) profileUpdates.email = email;
-
-    const { error: profileError } = await supabaseAdmin
-      .from('user_profiles')
-      .update(profileUpdates)
-      .eq('id', userId);
-
-    if (profileError) {
+    if (deleteError) {
       return new Response(
-        JSON.stringify({ error: profileError.message }),
+        JSON.stringify({ error: deleteError.message }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -109,9 +93,10 @@ Deno.serve(async (req: Request) => {
 
   } catch (error) {
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : '更新用户失败' }),
+      JSON.stringify({ error: error instanceof Error ? error.message : '删除用户失败' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+
 

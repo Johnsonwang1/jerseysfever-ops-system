@@ -47,55 +47,53 @@ Deno.serve(async (req: Request) => {
 
     if (!requestProfile || requestProfile.role !== 'admin') {
       return new Response(
-        JSON.stringify({ error: '权限不足，只有管理员可以删除用户' }),
+        JSON.stringify({ error: '权限不足，只有管理员可以创建用户' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 获取要删除的用户 ID
-    const { userId } = await req.json();
+    // 获取请求参数
+    const { email, password, name, role } = await req.json();
 
-    if (!userId) {
+    if (!email || !password || !name) {
       return new Response(
-        JSON.stringify({ error: '缺少用户 ID' }),
+        JSON.stringify({ error: '缺少必要参数' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 不能删除自己
-    if (userId === requestUser.id) {
-      return new Response(
-        JSON.stringify({ error: '不能删除自己的账号' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // 使用 service role 客户端删除用户
+    // 使用 service role 客户端创建用户
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // 删除 auth 用户（会自动级联删除 user_profiles）
-    const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    // 创建 auth 用户
+    const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true, // 自动确认邮箱
+      user_metadata: { name, role: role || 'viewer' }
+    });
 
-    if (deleteError) {
+    if (createError) {
       return new Response(
-        JSON.stringify({ error: deleteError.message }),
+        JSON.stringify({ error: createError.message }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     return new Response(
-      JSON.stringify({ success: true }),
+      JSON.stringify({ success: true, user: newUser.user }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : '删除用户失败' }),
+      JSON.stringify({ error: error instanceof Error ? error.message : '创建用户失败' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+
 

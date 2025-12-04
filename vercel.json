@@ -1,7 +1,4 @@
 {
-  "buildCommand": "cd jerseysfever-ops-system && npm run build",
-  "outputDirectory": "jerseysfever-ops-system/dist",
-  "installCommand": "cd jerseysfever-ops-system && npm install",
   "rewrites": [
     { "source": "/(.*)", "destination": "/" }
   ]
