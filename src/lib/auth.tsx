@@ -30,7 +30,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  // 默认不 loading，直接显示页面
+  const [loading, setLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 加载用户资料
@@ -67,54 +69,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.id, loadProfile]);
 
-  // 初始化：快速检查 session，2秒超时
+  // 初始化：后台检查 session，不阻塞页面显示
   useEffect(() => {
+    if (initialized) return;
+    setInitialized(true);
+
     let mounted = true;
-    let timeoutId: ReturnType<typeof setTimeout>;
 
-    const init = async () => {
-      // 设置 5 秒超时，超时就直接显示登录页
-      timeoutId = setTimeout(() => {
-        if (mounted && loading) {
-          console.log('[Auth] Init timeout, show login');
-          setLoading(false);
-        }
-      }, 5000);
+    // 后台静默检查 session
+    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
+      if (!mounted) return;
 
-      try {
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
-
-        if (!mounted) return;
-        clearTimeout(timeoutId);
-
-        if (currentSession?.user) {
-          console.log('[Auth] Found session for:', currentSession.user.email);
-          setSession(currentSession);
-          setUser(currentSession.user);
-
-          const success = await loadProfile(currentSession.user.id);
-          if (!success) {
-            // profile 加载失败，清除 session
-            await supabase.auth.signOut();
-            setSession(null);
-            setUser(null);
-          }
-        } else {
-          console.log('[Auth] No session');
-        }
-      } catch (err) {
-        console.error('[Auth] Init error:', err);
-        clearTimeout(timeoutId);
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+      if (currentSession?.user) {
+        console.log('[Auth] Found session for:', currentSession.user.email);
+        setSession(currentSession);
+        setUser(currentSession.user);
+        await loadProfile(currentSession.user.id);
+      } else {
+        console.log('[Auth] No session');
       }
-    };
+    }).catch(err => {
+      console.error('[Auth] getSession error:', err);
+    });
 
-    init();
-
-    // 监听登录/登出事件（用于 signIn/signOut 后的状态更新）
+    // 监听登录/登出事件
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
         if (!mounted) return;
@@ -138,10 +116,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
-      clearTimeout(timeoutId);
       subscription.unsubscribe();
     };
-  }, [loadProfile]);
+  }, [initialized, loadProfile]);
 
   // 登录
   const signIn = useCallback(async (email: string, password: string) => {
