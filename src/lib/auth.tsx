@@ -35,22 +35,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 加载用户资料
+  // 加载用户资料（带超时）
   const loadProfile = useCallback(async (userId: string): Promise<boolean> => {
+    console.log('[Auth] Loading profile for:', userId);
+
     try {
-      const { data, error: fetchError } = await supabase
+      // 5秒超时
+      const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+        setTimeout(() => resolve({ data: null, error: { message: '请求超时' } }), 5000);
+      });
+
+      const fetchPromise = supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
+      const { data, error: fetchError } = await Promise.race([fetchPromise, timeoutPromise]);
+
       if (fetchError || !data) {
         console.error('[Auth] Profile error:', fetchError?.message);
-        setError('用户资料不存在');
+        setError(fetchError?.message || '用户资料不存在');
         setProfile(null);
         return false;
       }
 
+      console.log('[Auth] Profile loaded:', data.email);
       setProfile(data);
       setError(null);
       return true;
@@ -120,25 +130,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [initialized, loadProfile]);
 
-  // 登录
+  // 登录（带超时）
   const signIn = useCallback(async (email: string, password: string) => {
+    console.log('[Auth] Signing in:', email);
     setError(null);
     setLoading(true);
 
     try {
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      // 10秒超时
+      const timeoutPromise = new Promise<{ data: { user: null; session: null }; error: { message: string } }>((resolve) => {
+        setTimeout(() => resolve({ data: { user: null, session: null }, error: { message: '登录超时，请重试' } }), 10000);
       });
 
+      const signInPromise = supabase.auth.signInWithPassword({ email, password });
+      const { data, error: signInError } = await Promise.race([signInPromise, timeoutPromise]);
+
       if (signInError) {
+        console.error('[Auth] SignIn error:', signInError.message);
         setError(signInError.message);
         setLoading(false);
         return { error: signInError as Error };
       }
 
-      // 登录成功后手动加载 profile（不等 onAuthStateChange）
+      // 登录成功后手动加载 profile
       if (data.user) {
+        console.log('[Auth] SignIn success, loading profile...');
         setSession(data.session);
         setUser(data.user);
         const success = await loadProfile(data.user.id);
@@ -148,9 +164,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      console.log('[Auth] Login complete');
       setLoading(false);
       return { error: null };
     } catch (err) {
+      console.error('[Auth] SignIn exception:', err);
       const error = err instanceof Error ? err : new Error('登录失败');
       setError(error.message);
       setLoading(false);
