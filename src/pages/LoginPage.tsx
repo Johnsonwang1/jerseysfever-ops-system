@@ -45,7 +45,7 @@ export function LoginPage() {
   const [initTimeout, setInitTimeout] = useState(false);
 
   // 初始化超时计时器
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // 设置初始化超时（8秒）
