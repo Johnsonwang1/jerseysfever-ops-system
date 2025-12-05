@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { AnalyticsData, DailyStat, ProductStat, SiteKey, Order, OrderLineItem } from './types';
+import type { AnalyticsData, DailyStat, ProductStat, SiteKey, OrderLineItem } from './types';
 
 // 有效订单状态（计入销售统计）
 const VALID_ORDER_STATUSES = ['completed', 'processing'];

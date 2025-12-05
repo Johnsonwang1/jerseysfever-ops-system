@@ -122,22 +122,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     console.log('[Auth] Initializing...');
 
-    // 获取当前 session
-    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
-      if (!mountedRef.current) return;
-
-      console.log('[Auth] Initial session:', currentSession?.user?.id || 'none');
-
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-
-      if (currentSession?.user) {
-        setAuthState('authenticated');
-        await loadProfile(currentSession.user.id);
-      } else {
+    // 初始化超时保护（5秒）
+    let isInitComplete = false;
+    const initTimeout = setTimeout(() => {
+      if (mountedRef.current && !isInitComplete) {
+        console.warn('[Auth] Init timeout, setting unauthenticated');
         setAuthState('unauthenticated');
       }
-    });
+    }, 5000);
+
+    // 获取当前 session
+    supabase.auth.getSession()
+      .then(async ({ data: { session: currentSession }, error }) => {
+        isInitComplete = true;
+        clearTimeout(initTimeout);
+        if (!mountedRef.current) return;
+
+        if (error) {
+          console.error('[Auth] getSession error:', error);
+          setAuthState('unauthenticated');
+          return;
+        }
+
+        console.log('[Auth] Initial session:', currentSession?.user?.id || 'none');
+
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+
+        if (currentSession?.user) {
+          setAuthState('authenticated');
+          await loadProfile(currentSession.user.id);
+        } else {
+          setAuthState('unauthenticated');
+        }
+      })
+      .catch((err) => {
+        isInitComplete = true;
+        clearTimeout(initTimeout);
+        console.error('[Auth] getSession exception:', err);
+        if (mountedRef.current) {
+          setAuthState('unauthenticated');
+        }
+      });
 
     // 监听认证状态变化
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -178,6 +204,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mountedRef.current = false;
+      clearTimeout(initTimeout);
       subscription.unsubscribe();
     };
   }, [loadProfile]);
