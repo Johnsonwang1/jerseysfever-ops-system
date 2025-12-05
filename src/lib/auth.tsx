@@ -54,8 +54,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 设置超时保护，防止 Supabase 连接卡住
+    const timeout = setTimeout(() => {
+      console.warn('Auth session check timed out');
+      setLoading(false);
+    }, 5000); // 5秒超时
+
     // 获取初始会话
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      clearTimeout(timeout);
       setSession(session);
       setUser(session?.user ?? null);
       
@@ -64,6 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(userProfile);
       }
       
+      setLoading(false);
+    }).catch((error) => {
+      clearTimeout(timeout);
+      console.error('Failed to get session:', error);
       setLoading(false);
     });
 
@@ -84,7 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   // 登录
