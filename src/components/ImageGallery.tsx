@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { X, Plus, GripVertical, Image as ImageIcon, Loader2, ZoomIn, Trash2 } from 'lucide-react';
+import { Plus, GripVertical, Image as ImageIcon, Loader2, ZoomIn, Trash2 } from 'lucide-react';
 import { uploadImageToStorage } from '../lib/supabase';
 import { ImageLightbox } from './ImageLightbox';
 

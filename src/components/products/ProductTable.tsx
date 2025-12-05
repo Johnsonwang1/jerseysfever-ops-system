@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Package, Eye, ExternalLink, Trash2, Loader2, ChevronLeft, ChevronRight, CheckSquare, Square, MinusSquare, RefreshCw, ChevronRightIcon } from 'lucide-react';
+import { Package, Eye, ExternalLink, Trash2, Loader2, ChevronLeft, ChevronRight, CheckSquare, Square, MinusSquare, RefreshCw } from 'lucide-react';
 import { getMainSitePrice, getMainSiteStatus, type LocalProduct } from '../../lib/products';
 import type { SiteKey } from '../../lib/types';
 

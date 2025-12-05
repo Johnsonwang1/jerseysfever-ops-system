@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, ChevronDown } from 'lucide-react';
-import { getOrders, syncOrders, syncOrdersSequentially, subscribeToOrders, formatCurrency, formatDate, getSiteLabel, type OrderQueryResult } from '../lib/orders';
+import { getOrders, syncOrders, subscribeToOrders, formatCurrency, formatDate, getSiteLabel, type OrderQueryResult } from '../lib/orders';
 import { ORDER_STATUS_CONFIG, type Order, type OrderStatus, type SiteKey, type OrderSyncResult } from '../lib/types';
 import { OrderDetailModal } from '../components/OrderDetailModal';
 import { useAuth } from '../lib/auth';
@@ -32,7 +32,6 @@ export function OrdersPage() {
   // 同步状态
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResults, setSyncResults] = useState<OrderSyncResult[] | null>(null);
-  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; currentSite: SiteKey | null }>({ current: 0, total: 4, currentSite: null });
 
   // 弹窗状态
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);

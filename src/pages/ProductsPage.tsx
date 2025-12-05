@@ -54,7 +54,7 @@ export function ProductsPage() {
   }>>>({});
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const syncMenuRef = useRef<HTMLDivElement>(null);
-  const [deletingSku, setDeletingSku] = useState<string | null>(null);
+  const [deletingSku, _setDeletingSku] = useState<string | null>(null);
   const [perPage, setPerPage] = useState(20);
 
   // 删除确认弹窗状态
@@ -331,7 +331,7 @@ export function ProductsPage() {
   };
 
   // 批量删除
-  const handleBatchDelete = async (sites: SiteKey[], deleteLocal: boolean) => {
+  const handleBatchDelete = async (sites: SiteKey[], deleteLocal = true) => {
     const selectedProducts = products.filter(p => selectedSkus.has(p.sku));
 
     setIsBatchProcessing(true);

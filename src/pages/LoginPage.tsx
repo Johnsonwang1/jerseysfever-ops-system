@@ -30,7 +30,6 @@ function mapErrorMessage(message: string): string {
 
 export function LoginPage() {
   const {
-    status,
     authState,
     profileState,
     isAuthenticated,

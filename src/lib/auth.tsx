@@ -40,12 +40,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // 延迟函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 创建带超时的 fetch
-function createTimeoutSignal(ms: number): AbortSignal {
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms);
-  return controller.signal;
-}
 
 // 获取用户资料（带重试和超时）
 async function fetchUserProfile(
@@ -131,7 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initialSessionHandledRef = useRef(false);
 
   // 加载用户资料
-  const loadProfile = useCallback(async (userId: string, isInitial = false) => {
+  const loadProfile = useCallback(async (userId: string, _isInitial = false) => {
     // 避免重复加载同一用户
     if (loadingUserIdRef.current === userId) {
       console.log('[Auth] Skipping duplicate profile load for:', userId);
