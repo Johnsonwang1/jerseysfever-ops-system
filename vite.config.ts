@@ -5,6 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // 支持 VITE_, NEXT_PUBLIC_, SUPABASE_ 前缀的环境变量
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_', 'SUPABASE_'],
   build: {
     rollupOptions: {
       output: {

@@ -54,11 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 设置超时保护，防止 Supabase 连接卡住
+    // 设置超时保护，防止 Supabase 连接卡住（静默处理）
     const timeout = setTimeout(() => {
-      console.warn('Auth session check timed out');
       setLoading(false);
-    }, 5000); // 5秒超时
+    }, 8000); // 8秒超时
 
     // 获取初始会话
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -72,9 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       
       setLoading(false);
-    }).catch((error) => {
+    }).catch(() => {
       clearTimeout(timeout);
-      console.error('Failed to get session:', error);
       setLoading(false);
     });
 
