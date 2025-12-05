@@ -8,6 +8,7 @@ import { Loader2 } from 'lucide-react';
 // 懒加载页面组件
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then(m => ({ default: m.ProductsPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then(m => ({ default: m.UsersPage })));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 
@@ -107,6 +108,7 @@ function AppRoutes() {
           <Route index element={<Navigate to="/products" replace />} />
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
+          <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="users" element={<UsersPage />} />
         </Route>
 
