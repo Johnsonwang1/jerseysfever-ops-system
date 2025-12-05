@@ -3,6 +3,7 @@ import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, Chevr
 import { getOrders, syncOrders, subscribeToOrders, formatCurrency, formatDate, getSiteLabel, type OrderQueryResult } from '../lib/orders';
 import { ORDER_STATUS_CONFIG, type Order, type OrderStatus, type SiteKey, type OrderSyncResult } from '../lib/types';
 import { OrderDetailModal } from '../components/OrderDetailModal';
+import { DateRangePicker } from '../components/DateRangePicker';
 import { useAuth } from '../lib/auth';
 
 const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr'];
@@ -19,13 +20,21 @@ export function OrdersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
 
-  // 筛选状态
+  // 日期工具函数
+  const getToday = () => new Date().toISOString().split('T')[0];
+  const getTomorrow = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  };
+
+  // 筛选状态 - 默认今天到明天
   const [searchQuery, setSearchQuery] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [selectedSites, setSelectedSites] = useState<SiteKey[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<OrderStatus[]>([]);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(getToday);
+  const [dateTo, setDateTo] = useState(getTomorrow);
   const [showFilters, setShowFilters] = useState(false);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -279,22 +288,12 @@ export function OrdersPage() {
               </div>
 
               {/* 日期范围 */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">开始日期</label>
-                <input
-                  type="date"
-                  value={dateFrom}
-                  onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">结束日期</label>
-                <input
-                  type="date"
-                  value={dateTo}
-                  onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400"
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">日期范围</label>
+                <DateRangePicker
+                  dateFrom={dateFrom}
+                  dateTo={dateTo}
+                  onChange={(from, to) => { setDateFrom(from); setDateTo(to); setPage(1); }}
                 />
               </div>
             </div>

@@ -323,7 +323,7 @@ export async function getOrderStats(): Promise<{
 }
 
 // 格式化货币
-export function formatCurrency(amount: number, currency: string): string {
+export function formatCurrency(amount: number | string, currency: string): string {
   const currencySymbols: Record<string, string> = {
     USD: '$',
     EUR: '€',
@@ -331,7 +331,8 @@ export function formatCurrency(amount: number, currency: string): string {
   };
 
   const symbol = currencySymbols[currency] || currency + ' ';
-  return `${symbol}${amount.toFixed(2)}`;
+  const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+  return `${symbol}${(numAmount || 0).toFixed(2)}`;
 }
 
 // 格式化日期

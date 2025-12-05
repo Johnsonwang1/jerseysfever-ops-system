@@ -253,3 +253,34 @@ export interface OrderSyncResult {
   errors: number;
   error?: string;
 }
+
+// 销售分析数据
+export interface AnalyticsData {
+  orderCount: number;        // 有效订单数
+  itemCount: number;         // 销售件数
+  revenue: number;           // 销售额
+  refunds: number;           // 退款额
+  refundCount: number;       // 退款订单数
+  // 按日期分组的数据（用于图表）
+  dailyStats: DailyStat[];
+}
+
+export interface DailyStat {
+  date: string;              // YYYY-MM-DD
+  orderCount: number;
+  itemCount: number;
+  revenue: number;
+  refunds: number;
+}
+
+// 商品销量统计
+export interface ProductStat {
+  sku: string;
+  name: string;
+  image: string;             // 商品图片 URL
+  quantity: number;          // 销售件数
+  revenue: number;           // 销售收入
+  refundQuantity: number;    // 退款件数
+  refundAmount: number;      // 退款金额
+  orderCount: number;        // 订单数（出现在多少个订单中）
+}
