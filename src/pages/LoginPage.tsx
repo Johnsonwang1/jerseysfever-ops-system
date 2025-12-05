@@ -17,7 +17,7 @@ export function LoginPage() {
     return <Navigate to="/products" replace />;
   }
 
-  // 初始化中
+  // 初始化检查中
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 gap-4">
@@ -35,7 +35,6 @@ export function LoginPage() {
     const result = await signIn(email, password);
 
     if (result.error) {
-      // 转换错误消息
       let msg = result.error.message;
       if (msg.includes('Invalid login credentials')) {
         msg = '邮箱或密码错误';

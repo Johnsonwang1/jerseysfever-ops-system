@@ -17,11 +17,6 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  // 兼容旧代码
-  authState: 'initializing' | 'authenticated' | 'unauthenticated';
-  profileState: 'idle' | 'loading' | 'loaded' | 'error';
-  hasProfile: boolean;
-  status: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -30,96 +25,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  // 默认不 loading，直接显示页面
-  const [loading, setLoading] = useState(false);
-  const [initialized, setInitialized] = useState(false);
+  const [loading, setLoading] = useState(true); // 初始化时 loading
   const [error, setError] = useState<string | null>(null);
 
-  // 加载用户资料（带超时）
-  const loadProfile = useCallback(async (userId: string): Promise<boolean> => {
-    console.log('[Auth] Loading profile for:', userId);
-
+  // 加载用户资料
+  const loadProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
     try {
-      // 5秒超时
-      const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
-        setTimeout(() => resolve({ data: null, error: { message: '请求超时' } }), 5000);
-      });
-
-      const fetchPromise = supabase
+      const { data, error: fetchError } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
-      const { data, error: fetchError } = await Promise.race([fetchPromise, timeoutPromise]);
-
       if (fetchError || !data) {
         console.error('[Auth] Profile error:', fetchError?.message);
-        setError(fetchError?.message || '用户资料不存在');
-        setProfile(null);
-        return false;
+        return null;
       }
 
-      console.log('[Auth] Profile loaded:', data.email);
-      setProfile(data);
-      setError(null);
-      return true;
+      return data;
     } catch (err) {
       console.error('[Auth] Profile exception:', err);
-      setError('加载用户资料失败');
-      setProfile(null);
-      return false;
+      return null;
     }
   }, []);
 
   // 刷新资料
   const refreshProfile = useCallback(async () => {
     if (user?.id) {
-      await loadProfile(user.id);
+      const data = await loadProfile(user.id);
+      if (data) setProfile(data);
     }
   }, [user?.id, loadProfile]);
 
-  // 初始化：后台检查 session，不阻塞页面显示
+  // 初始化 - 检查现有 session
   useEffect(() => {
-    if (initialized) return;
-    setInitialized(true);
-
     let mounted = true;
 
-    // 后台静默检查 session
-    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
-      if (!mounted) return;
+    const init = async () => {
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
 
-      if (currentSession?.user) {
-        console.log('[Auth] Found session for:', currentSession.user.email);
-        setSession(currentSession);
-        setUser(currentSession.user);
-        await loadProfile(currentSession.user.id);
-      } else {
-        console.log('[Auth] No session');
+        if (!mounted) return;
+
+        if (currentSession?.user) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+          const profileData = await loadProfile(currentSession.user.id);
+          if (mounted && profileData) {
+            setProfile(profileData);
+          }
+        }
+      } catch (err) {
+        console.error('[Auth] Init error:', err);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-    }).catch(err => {
-      console.error('[Auth] getSession error:', err);
-    });
+    };
 
-    // 监听登录/登出事件
+    init();
+
+    // 监听认证状态变化
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
         if (!mounted) return;
-        console.log('[Auth] Event:', event);
-
-        if (event === 'SIGNED_IN' && newSession?.user) {
-          setSession(newSession);
-          setUser(newSession.user);
-          await loadProfile(newSession.user.id);
-          setLoading(false);
-        }
 
         if (event === 'SIGNED_OUT') {
           setSession(null);
           setUser(null);
           setProfile(null);
           setError(null);
+        }
+
+        if (event === 'TOKEN_REFRESHED' && newSession) {
+          setSession(newSession);
         }
       }
     );
@@ -128,50 +108,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [initialized, loadProfile]);
+  }, [loadProfile]);
 
-  // 登录（带超时）
+  // 登录
   const signIn = useCallback(async (email: string, password: string) => {
-    console.log('[Auth] Signing in:', email);
     setError(null);
-    setLoading(true);
 
     try {
-      // 10秒超时
-      const timeoutPromise = new Promise<{ data: { user: null; session: null }; error: { message: string } }>((resolve) => {
-        setTimeout(() => resolve({ data: { user: null, session: null }, error: { message: '登录超时，请重试' } }), 10000);
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      const signInPromise = supabase.auth.signInWithPassword({ email, password });
-      const { data, error: signInError } = await Promise.race([signInPromise, timeoutPromise]);
-
       if (signInError) {
-        console.error('[Auth] SignIn error:', signInError.message);
         setError(signInError.message);
-        setLoading(false);
         return { error: signInError as Error };
       }
 
-      // 登录成功后手动加载 profile
-      if (data.user) {
-        console.log('[Auth] SignIn success, loading profile...');
+      if (data.user && data.session) {
         setSession(data.session);
         setUser(data.user);
-        const success = await loadProfile(data.user.id);
-        if (!success) {
-          setLoading(false);
+
+        const profileData = await loadProfile(data.user.id);
+        if (profileData) {
+          setProfile(profileData);
+        } else {
+          setError('用户资料不存在');
           return { error: new Error('用户资料不存在') };
         }
       }
 
-      console.log('[Auth] Login complete');
-      setLoading(false);
       return { error: null };
     } catch (err) {
-      console.error('[Auth] SignIn exception:', err);
       const error = err instanceof Error ? err : new Error('登录失败');
       setError(error.message);
-      setLoading(false);
       return { error };
     }
   }, [loadProfile]);
@@ -185,10 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
-  // 计算状态
   const isAuthenticated = !!user && !!profile;
-  const authState = loading ? 'initializing' : (user ? 'authenticated' : 'unauthenticated');
-  const profileState = loading ? 'loading' : (profile ? 'loaded' : (error ? 'error' : 'idle'));
 
   const value: AuthContextType = {
     user,
@@ -201,10 +168,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn,
     signOut,
     refreshProfile,
-    authState,
-    profileState,
-    hasProfile: !!profile,
-    status: authState,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
