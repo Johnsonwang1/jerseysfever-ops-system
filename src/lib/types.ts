@@ -1,3 +1,24 @@
+// ==================== 认证相关类型 ====================
+
+// 用户角色类型
+export type UserRole = 'admin' | 'editor' | 'viewer';
+
+// 认证状态
+export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'unauthenticated' | 'error';
+
+// 用户资料
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  avatar_url?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ==================== 上传相关类型 ====================
+
 // 上传的图片
 export interface UploadedImage {
   id: string;
@@ -127,4 +148,108 @@ export interface WooProduct {
   date_modified: string;
   description: string;
   short_description: string;
+}
+
+// ==================== 订单相关类型 ====================
+
+// 订单状态
+export type OrderStatus =
+  | 'pending'
+  | 'processing'
+  | 'on-hold'
+  | 'completed'
+  | 'cancelled'
+  | 'refunded'
+  | 'failed';
+
+// 订单状态显示配置
+export const ORDER_STATUS_CONFIG: Record<OrderStatus, { label: string; color: string }> = {
+  'pending': { label: '待付款', color: 'yellow' },
+  'processing': { label: '处理中', color: 'blue' },
+  'on-hold': { label: '保留', color: 'orange' },
+  'completed': { label: '已完成', color: 'green' },
+  'cancelled': { label: '已取消', color: 'gray' },
+  'refunded': { label: '已退款', color: 'purple' },
+  'failed': { label: '失败', color: 'red' },
+};
+
+// 地址
+export interface Address {
+  first_name: string;
+  last_name: string;
+  address_1: string;
+  address_2?: string;
+  city: string;
+  state: string;
+  postcode: string;
+  country: string;
+  email?: string;
+  phone?: string;
+}
+
+// 订单商品项
+export interface OrderLineItem {
+  id: number;
+  name: string;
+  product_id: number;
+  variation_id: number;
+  quantity: number;
+  price: number;
+  sku: string;
+  image?: { src: string };  // 商品图片
+  meta_data: Array<{ key: string; value: string }>;
+}
+
+// 配送信息
+export interface ShippingLine {
+  method_title: string;
+  total: number;
+}
+
+// 订单（数据库格式）
+export interface Order {
+  id: string;
+  order_number: string;
+  site: SiteKey;
+  woo_id: number;
+  status: OrderStatus;
+  currency: string;
+  total: number;
+  subtotal: number;
+  shipping_total: number;
+  discount_total: number;
+  customer_email: string | null;
+  customer_name: string | null;
+  billing_address: Address;
+  shipping_address: Address;
+  line_items: OrderLineItem[];
+  shipping_lines: ShippingLine[];
+  payment_method: string | null;
+  payment_method_title: string | null;
+  date_created: string;
+  date_paid: string | null;
+  date_completed: string | null;
+  created_at: string;
+  updated_at: string;
+  last_synced_at: string | null;
+}
+
+// 订单查询参数
+export interface OrderQueryParams {
+  sites?: SiteKey[];
+  statuses?: OrderStatus[];
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+}
+
+// 订单同步结果
+export interface OrderSyncResult {
+  site: SiteKey;
+  success: boolean;
+  synced: number;
+  errors: number;
+  error?: string;
 }

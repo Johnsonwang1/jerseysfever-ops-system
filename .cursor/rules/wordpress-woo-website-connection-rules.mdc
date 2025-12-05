@@ -1,0 +1,130 @@
+---
+description: When users need to view the website or access the website's data and operations, they can use SiteGround SSH or WooCommerce API to view.
+alwaysApply: false
+---
+# SiteGround 连接与操作规则
+
+## SSH 连接配置
+
+### 1. SSH密钥管理
+- **公钥位置**: `~/.ssh/id_ed25519.pub`
+- **SiteGround上传**: 必须在SiteGround控制面板的SSH Keys Manager中上传公钥
+- **密钥指纹**: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAz6tZlTpXw/uRRZeXUSr5CPbEZEz/mWdOIlE3WdLKxi mac ssh key`
+
+### 2. SSH配置文件 (`~/.ssh/config`)
+
+#### jerseysfever.de (德国站，原 jerseysfeverco.com)
+```
+Host siteground
+    HostName c1106643.sgvps.net
+    User u2-xir29d7krklo
+    Port 18765
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+#### jerseysfever.com
+```
+Host siteground-com
+    HostName c1106643.sgvps.net
+    User u14-uzw9vveqwyis
+    Port 18765
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+#### jerseysfever.fr (法国站)
+```
+Host siteground-fr
+    HostName c1106643.sgvps.net
+    User u6-qxh1engk0meb
+    Port 18765
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+#### jerseysfever.uk
+```
+Host siteground-uk
+    HostName c1106643.sgvps.net
+    User u7-5hqfgephbn8m
+    Port 18765
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+### 3. 连接验证命令
+
+#### 德国站验证 (jerseysfever.de)
+```bash
+ssh siteground "echo 'jerseysfever.de连接成功'"
+```
+
+#### 法国站验证
+```bash
+ssh siteground-fr "echo '法国站连接成功'"
+```
+
+#### jerseysfever.uk验证
+```bash
+ssh siteground-uk "echo 'jerseysfever.uk连接成功'"
+```
+
+#### jerseysfever.com验证
+```bash
+ssh siteground-com "echo 'jerseysfever.com连接成功'"
+```
+
+## 网站结构与路径
+
+### jerseysfever.de (德国站，原 jerseysfeverco.com)
+```
+www/jerseysfever.de/
+├── public_html/           # 网站根目录
+│   ├── wp-config.php     # WordPress配置文件
+│   ├── wp-content/       # WordPress内容目录
+│   │   ├── plugins/      # 插件目录
+│   │   ├── themes/       # 主题目录 (Rey + Rey Child)
+│   │   ├── uploads/      # 媒体文件目录
+│   │   └── mu-plugins/   # Must-use插件目录
+│   └── wp-admin/         # WordPress后台
+└── logs/                  # 网站日志目录
+```
+
+### jerseysfever.fr (法国站)
+```
+www/jerseysfever.fr/
+├── public_html/           # 网站根目录
+│   ├── wp-config.php     # WordPress配置文件
+│   ├── wp-content/       # WordPress内容目录
+│   │   ├── plugins/      # 插件目录
+│   │   ├── themes/       # 主题目录 (Rey + Rey Child)
+│   │   ├── uploads/      # 媒体文件目录
+│   │   └── mu-plugins/   # Must-use插件目录
+│   └── wp-admin/         # WordPress后台
+└── logs/                  # 网站日志目录
+```
+
+### jerseysfever.uk (英国站)
+```
+www/jerseysfever.uk/
+├── public_html/           # 网站根目录
+│   ├── wp-config.php     # WordPress配置文件
+│   ├── wp-content/       # WordPress内容目录
+│   │   ├── plugins/      # 插件目录
+│   │   ├── themes/       # 主题目录 (Rey + Rey Child)
+│   │   ├── uploads/      # 媒体文件目录
+│   │   └── mu-plugins/   # Must-use插件目录
+│   └── wp-admin/         # WordPress后台
+└── logs/                  # 网站日志目录
+```
+
+### jerseysfever.com
+```
+www/jerseysfever.com/
+├── public_html/           # 网站根目录
+│   ├── wp-config.php     # WordPress配置文件
+│   ├── wp-content/       # WordPress内容目录
+│   │   ├── plugins/      # 插件目录
+│   │   ├── themes/       # 主题目录
+│   │   ├── uploads/      # 媒体文件目录
+│   │   └── mu-plugins/   # Must-use插件目录
+│   └── wp-admin/         # WordPress后台
+└── logs/                  # 网站日志目录
+```

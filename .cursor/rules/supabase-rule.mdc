@@ -1,0 +1,153 @@
+---
+description: When the application needs to connect or deploy Supabase tables, edge functions, or storage, it is necessary to read this connection guide.
+alwaysApply: false
+---
+
+
+# Supabase 操作流程
+
+## 项目信息
+
+| 项目 | 值 |
+|------|-----|
+| Project ID | `iwzohjbvuhwvfidyevpf` |
+| Project Name | Johnsonwang1's Project |
+| Region | Southeast Asia (Singapore) |
+| Dashboard | https://supabase.com/dashboard/project/iwzohjbvuhwvfidyevpf |
+
+---
+
+## 工具选择原则
+
+| 操作类型 | 使用工具 | 说明 |
+|----------|----------|------|
+| Edge Function 部署 | **CLI** | 需要 `--no-verify-jwt` 等参数 |
+| SQL 迁移文件执行 | **CLI** | 指定文件路径执行 |
+| 其他所有操作 | **MCP** | 查询、插入、日志等 |
+
+---
+
+## CLI 操作（仅限以下场景）
+
+### 1. 登录
+
+```bash
+# 使用 Access Token 登录
+npx supabase login --token sbp_1588bdbbe8585189d6ec9823c733b75944d9c966
+
+# 退出登录
+echo "y" | npx supabase logout
+
+# 验证登录（查看项目列表）
+npx supabase projects list
+```
+
+### 2. 部署 Edge Function
+
+```bash
+cd /Users/yushengwang/Desktop/Python\ Project/jerseysfever/商品上架系统/jerseysfever-ops-system
+
+# 部署并禁用 JWT 验证
+npx supabase functions deploy woo-webhook --no-verify-jwt --project-ref iwzohjbvuhwvfidyevpf
+```
+
+### 3. 执行 SQL 迁移文件
+
+```bash
+# 执行指定的 SQL 文件
+npx supabase db execute --project-ref iwzohjbvuhwvfidyevpf -f path/to/migration.sql
+```
+
+---
+
+## MCP 操作（推荐）
+
+### 1. 执行 SQL 查询
+
+```
+工具: mcp_jersey-upload-supabase_execute_sql
+参数: { "query": "SELECT * FROM products LIMIT 10" }
+```
+
+### 2. 应用迁移（简单 DDL）
+
+```
+工具: mcp_jersey-upload-supabase_apply_migration
+参数: { 
+  "name": "add_new_column",
+  "query": "ALTER TABLE products ADD COLUMN new_field TEXT"
+}
+```
+
+### 3. 查看表结构
+
+```
+工具: mcp_jersey-upload-supabase_list_tables
+参数: { "schemas": ["public"] }
+```
+
+### 4. 查看 Edge Function 日志
+
+```
+工具: mcp_jersey-upload-supabase_get_logs
+参数: { "service": "edge-function" }
+```
+
+### 5. 查看 Edge Function 列表
+
+```
+工具: mcp_jersey-upload-supabase_list_edge_functions
+```
+
+### 6. 生成 TypeScript 类型
+
+```
+工具: mcp_jersey-upload-supabase_generate_typescript_types
+```
+
+### 7. 查看安全/性能建议
+
+```
+工具: mcp_jersey-upload-supabase_get_advisors
+参数: { "type": "security" }  // 或 "performance"
+```
+
+---
+
+## 凭证信息
+
+> ⚠️ 请妥善保管，不要泄露
+
+| 类型 | 值 | 用途 |
+|------|-----|------|
+| Project ID | `iwzohjbvuhwvfidyevpf` | CLI 和 MCP |
+| Access Token | `sbp_1588bdbbe8585189d6ec9823c733b75944d9c966` | CLI 登录 |
+| Secret Key | `sb_secret_1NdYzeGQrckEiGc9Edizqw_DTp_8bdO` | MCP 配置 |
+
+---
+
+## Edge Function URL
+
+```
+https://iwzohjbvuhwvfidyevpf.supabase.co/functions/v1/woo-webhook
+```
+
+---
+
+## 常见问题
+
+### CLI 403 权限错误
+
+**原因**：使用了错误账号的 Access Token
+
+**解决**：
+```bash
+echo "y" | npx supabase logout
+npx supabase login --token sbp_1588bdbbe8585189d6ec9823c733b75944d9c966
+```
+
+### Docker 警告
+
+```
+WARNING: Docker is not running
+```

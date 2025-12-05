@@ -158,7 +158,7 @@ function isSpecialSeason(season: string): boolean {
 // - Kids: Kids {Team} {Type} Jersey {Season}
 // - Women: {Team} {Type} Jersey {Season} - Women
 // - Player Version: {Team} {Type} Jersey Player Version {Season}
-// - Long Sleeve: {Team} {Type} Jersey {Season} Long Sleeve
+// - Long Sleeve: {Team} {Type} Long Sleeve Jersey {Season}
 // - Kit: Kids {Team} {Type} Jersey Kit {Season}
 export function generateProductTitle(info: {
   categories: string[];
@@ -176,6 +176,11 @@ export function generateProductTitle(info: {
   if (!team) return '';
 
   const parts: string[] = [];
+  
+  // 判断是否是长袖
+  const isLongSleeve = sleeve === 'Long Sleeve';
+  // Jersey 前面的修饰词
+  const jerseyType = isLongSleeve ? 'Long Sleeve Jersey' : 'Jersey';
 
   // Retro 商品 (有具体年份)
   if (year || season === 'Retro') {
@@ -183,17 +188,17 @@ export function generateProductTitle(info: {
     if (year) parts.push(year);
     parts.push(team);
     parts.push(type);
-    parts.push('Jersey');
+    parts.push(jerseyType);
   }
   // 特殊赛季（世界杯等）
   else if (isSpecialSeason(season)) {
+    if (gender === 'Kids') {
+      parts.push('Kids');
+    }
     parts.push(team);
     parts.push(type);
-    parts.push('Jersey');
+    parts.push(jerseyType);
     parts.push(season);  // World Cup 2026
-    if (gender === 'Kids') {
-      parts.unshift('Kids');  // Kids Argentina Home Jersey World Cup 2026
-    }
     if (gender === "Women's") {
       parts.push('- Women');
     }
@@ -206,9 +211,10 @@ export function generateProductTitle(info: {
     parts.push('Kids');
     parts.push(team);
     parts.push(type);
-    parts.push('Jersey');
     if (sleeve === 'Kit') {
-      parts.push('Kit');
+      parts.push('Jersey Kit');
+    } else {
+      parts.push(jerseyType);
     }
     parts.push(season);
   }
@@ -216,7 +222,7 @@ export function generateProductTitle(info: {
   else if (gender === "Women's") {
     parts.push(team);
     parts.push(type);
-    parts.push('Jersey');
+    parts.push(jerseyType);
     parts.push(season);
     if (version === 'Player Version') {
       parts.push('- Player Version');
@@ -227,14 +233,11 @@ export function generateProductTitle(info: {
   else {
     parts.push(team);
     parts.push(type);
-    parts.push('Jersey');
+    parts.push(jerseyType);
     if (version === 'Player Version') {
       parts.push('Player Version');
     }
     parts.push(season);
-    if (sleeve === 'Long Sleeve') {
-      parts.push('Long Sleeve');
-    }
   }
 
   return parts.filter(Boolean).join(' ');

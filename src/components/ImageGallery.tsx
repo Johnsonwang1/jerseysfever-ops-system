@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
-import { X, Plus, GripVertical, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { X, Plus, GripVertical, Image as ImageIcon, Loader2, ZoomIn, Trash2 } from 'lucide-react';
 import { uploadImageToStorage } from '../lib/supabase';
+import { ImageLightbox } from './ImageLightbox';
 
 interface ImageGalleryProps {
   images: string[];
@@ -13,14 +14,32 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [deleteConfirmIndex, setDeleteConfirmIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 删除图片
-  const handleRemove = (index: number) => {
-    const newImages = images.filter((_, i) => i !== index);
+  // 打开删除确认弹窗
+  const handleDeleteClick = (e: React.MouseEvent, index: number) => {
+    e.stopPropagation();
+    setDeleteConfirmIndex(index);
+  };
+
+  // 确认删除
+  const handleConfirmDelete = () => {
+    if (deleteConfirmIndex === null) return;
+
+    const newImages = images.filter((_, i) => i !== deleteConfirmIndex);
     onChange(newImages);
     if (selectedIndex >= newImages.length) {
       setSelectedIndex(Math.max(0, newImages.length - 1));
+    }
+    setDeleteConfirmIndex(null);
+  };
+
+  // 打开 lightbox
+  const handleOpenLightbox = () => {
+    if (images.length > 0) {
+      setLightboxOpen(true);
     }
   };
 
@@ -32,7 +51,7 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
     setUploading(true);
     setUploadError(null);
     const newImages: string[] = [];
-    
+
     try {
       for (const file of Array.from(files)) {
         // 读取文件为 base64
@@ -78,10 +97,10 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
     const newImages = [...images];
     const [removed] = newImages.splice(draggedIndex, 1);
     newImages.splice(index, 0, removed);
-    
+
     onChange(newImages);
     setDraggedIndex(index);
-    
+
     if (selectedIndex === draggedIndex) {
       setSelectedIndex(index);
     }
@@ -94,13 +113,25 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
   return (
     <div className="flex flex-col h-full">
       {/* 主图预览 */}
-      <div className="flex-1 bg-gray-50 rounded-xl overflow-hidden mb-4 flex items-center justify-center min-h-[300px]">
+      <div
+        className={`flex-1 bg-gray-50 rounded-xl overflow-hidden mb-4 flex items-center justify-center min-h-[300px] relative group ${
+          images.length > 0 ? 'cursor-zoom-in' : ''
+        }`}
+        onClick={handleOpenLightbox}
+      >
         {images.length > 0 ? (
-          <img
-            src={images[selectedIndex]}
-            alt=""
-            className="max-w-full max-h-full object-contain"
-          />
+          <>
+            <img
+              src={images[selectedIndex]}
+              alt=""
+              className="max-w-full max-h-full object-contain"
+            />
+            {/* 放大提示 */}
+            <div className="absolute bottom-3 right-3 p-2 bg-black/50 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
+              <ZoomIn className="w-4 h-4" />
+              <span className="text-xs">点击放大</span>
+            </div>
+          </>
         ) : (
           <div className="text-gray-400 flex flex-col items-center gap-2">
             <ImageIcon className="w-16 h-16" />
@@ -119,9 +150,9 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
             onDragOver={(e) => handleDragOver(e, index)}
             onDragEnd={handleDragEnd}
             onClick={() => setSelectedIndex(index)}
-            className={`relative group w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
+            className={`relative group w-20 h-20 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
               selectedIndex === index
-                ? 'border-gray-900 shadow-md'
+                ? 'border-blue-500 shadow-md'
                 : 'border-transparent hover:border-gray-300'
             } ${draggedIndex === index ? 'opacity-50' : ''}`}
           >
@@ -130,25 +161,23 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
               alt=""
               className="w-full h-full object-cover"
             />
-            
+
             {/* 拖拽手柄和删除按钮 */}
             {editable && (
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
-                <GripVertical className="w-4 h-4 text-white cursor-grab" />
+              <div className="absolute inset-0 bg-black/40 transition-opacity flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                <GripVertical className="w-5 h-5 text-white/80 cursor-grab" />
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemove(index);
-                  }}
-                  className="p-0.5 bg-red-500 rounded-full hover:bg-red-600"
+                  onClick={(e) => handleDeleteClick(e, index)}
+                  className="p-1.5 bg-red-500 hover:bg-red-600 rounded-full transition-colors"
+                  title="删除图片"
                 >
-                  <X className="w-3 h-3 text-white" />
+                  <Trash2 className="w-3.5 h-3.5 text-white" />
                 </button>
               </div>
             )}
 
             {/* 序号标记 */}
-            <div className="absolute top-0.5 left-0.5 w-4 h-4 bg-black/60 rounded text-white text-[10px] flex items-center justify-center">
+            <div className="absolute top-1 left-1 w-5 h-5 bg-black/60 rounded text-white text-xs flex items-center justify-center font-medium">
               {index + 1}
             </div>
           </div>
@@ -159,21 +188,21 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className={`w-16 h-16 rounded-lg border-2 border-dashed flex flex-col items-center justify-center transition-colors ${
-              uploading 
-                ? 'border-blue-300 bg-blue-50 text-blue-400 cursor-wait' 
+            className={`w-20 h-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center transition-colors ${
+              uploading
+                ? 'border-blue-300 bg-blue-50 text-blue-400 cursor-wait'
                 : 'border-gray-300 hover:border-gray-400 text-gray-400 hover:text-gray-500'
             }`}
           >
             {uploading ? (
               <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span className="text-[10px]">上传中</span>
+                <Loader2 className="w-6 h-6 animate-spin" />
+                <span className="text-xs mt-1">上传中</span>
               </>
             ) : (
               <>
-                <Plus className="w-5 h-5" />
-                <span className="text-[10px]">添加</span>
+                <Plus className="w-6 h-6" />
+                <span className="text-xs mt-1">添加</span>
               </>
             )}
           </button>
@@ -200,7 +229,54 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
       <div className="mt-3 text-xs text-gray-500 text-center">
         共 {images.length} 张图片 {editable && '· 拖拽可排序'}
       </div>
+
+      {/* Lightbox 弹窗预览 */}
+      {lightboxOpen && (
+        <ImageLightbox
+          images={images}
+          currentIndex={selectedIndex}
+          onClose={() => setLightboxOpen(false)}
+          onNavigate={setSelectedIndex}
+        />
+      )}
+
+      {/* 删除确认弹窗 */}
+      {deleteConfirmIndex !== null && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setDeleteConfirmIndex(null)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">确认删除</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              确定要删除第 {deleteConfirmIndex + 1} 张图片吗？此操作无法撤销。
+            </p>
+            {/* 预览要删除的图片 */}
+            <div className="mb-4 flex justify-center">
+              <img
+                src={images[deleteConfirmIndex]}
+                alt=""
+                className="w-24 h-24 object-cover rounded-lg border border-gray-200"
+              />
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setDeleteConfirmIndex(null)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-

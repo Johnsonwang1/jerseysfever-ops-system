@@ -108,22 +108,39 @@ export async function generateProductContent(
   }
 
   console.log(`AI: Generating ${language} content for ${site} via Edge Function`);
+  console.log(`AI: Image base64 size: ${imageBase64?.length || 0} chars`);
+
+  const requestBody = {
+    action: 'generate-content',
+    imageBase64,
+    language,
+    attributes,
+    generatedTitle,
+    model: currentModel,
+  };
+  
+  console.log(`AI: Request body size: ${JSON.stringify(requestBody).length} chars`);
 
   const { data, error } = await supabase.functions.invoke('ai-service', {
-    body: {
-      action: 'generate-content',
-      imageBase64,
-      language,
-      attributes,
-      generatedTitle,
-      model: currentModel,
-    },
+    body: requestBody,
   });
 
   if (error) {
     console.error('AI Edge Function error:', error);
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    // 尝试获取更详细的错误信息
+    if (error.context) {
+      console.error('Error context:', JSON.stringify(error.context));
+    }
+    // 如果有响应体
+    if ((error as any).response) {
+      console.error('Error response:', (error as any).response);
+    }
     throw new Error(error.message || 'AI 生成失败');
   }
+  
+  console.log('AI Response data:', data);
 
   if (!data?.success) {
     throw new Error(data?.error || 'AI 生成失败');

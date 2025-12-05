@@ -441,7 +441,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
       />
 
       {/* 弹窗内容 */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] mx-4 lg:mx-0 overflow-hidden flex flex-col">
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
@@ -460,17 +460,17 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
         </div>
 
         {/* 主体内容 */}
-        <div className="flex-1 overflow-hidden flex">
-          {/* 左侧 - 图片区域 */}
-          <div className="w-2/5 p-6 border-r border-gray-200 overflow-y-auto">
+        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+          {/* 左侧/顶部 - 图片区域 */}
+          <div className="h-[200px] lg:h-auto lg:w-2/5 p-4 lg:p-6 border-b lg:border-b-0 lg:border-r border-gray-200 overflow-y-auto flex-shrink-0 lg:flex-shrink">
             <ImageGallery
               images={editData.images}
               onChange={(images) => setEditData({ ...editData, images })}
             />
           </div>
 
-          {/* 右侧 - 信息区域 */}
-          <div className="w-3/5 flex flex-col overflow-hidden">
+          {/* 右侧/底部 - 信息区域 */}
+          <div className="flex-1 lg:w-3/5 flex flex-col overflow-hidden min-h-0">
             {/* Tab 切换 */}
             <div className="flex gap-1 p-2 bg-gray-50 border-b border-gray-200">
               {TABS.map((tab) => (
@@ -519,7 +519,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
         </div>
 
         {/* 底部操作栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 px-4 lg:px-6 py-4 border-t border-gray-200 bg-gray-50">
           {/* 错误提示 */}
           {error && (
             <div className="flex items-center gap-2 text-red-600 text-sm">
@@ -529,43 +529,43 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
           )}
 
           {!error && (
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-gray-500 hidden lg:block">
               {hasChanges && <span className="text-orange-600">有未保存的更改</span>}
             </div>
           )}
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 lg:gap-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              className="flex-1 lg:flex-none px-4 py-3 lg:py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
             >
               关闭
             </button>
-            
+
             <button
               onClick={handleSave}
               disabled={isSaving || !hasChanges}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 py-3 lg:py-2 text-sm bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSaving ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Save className="w-4 h-4" />
               )}
-              保存本地
+              <span className="hidden sm:inline">保存</span><span className="sm:hidden">存</span>
             </button>
 
             <button
               onClick={() => setShowSyncDialog(true)}
               disabled={isSyncing}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 py-3 lg:py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSyncing ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Upload className="w-4 h-4" />
               )}
-              同步到站点
+              <span className="hidden sm:inline">同步到站点</span><span className="sm:hidden">同步</span>
             </button>
           </div>
         </div>

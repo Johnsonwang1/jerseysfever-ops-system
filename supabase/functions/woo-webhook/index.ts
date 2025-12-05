@@ -6,7 +6,9 @@ const corsHeaders = {
 }
 
 // WooCommerce Webhook 事件类型
-type WebhookTopic = 'product.created' | 'product.updated' | 'product.deleted'
+type WebhookTopic =
+  | 'product.created' | 'product.updated' | 'product.deleted'
+  | 'order.created' | 'order.updated' | 'order.deleted'
 
 // 有效站点
 type Site = 'com' | 'uk' | 'de' | 'fr'
@@ -28,6 +30,226 @@ const SITE_MAP: Record<string, Site> = {
 // 所有站点列表
 const ALL_SITES: Site[] = ['com', 'uk', 'de', 'fr']
 
+// ==================== WooCommerce API 配置 ====================
+
+const SITE_URLS: Record<Site, string> = {
+  com: 'https://jerseysfever.com',
+  uk: 'https://jerseysfever.uk',
+  de: 'https://jerseysfever.de',
+  fr: 'https://jerseysfever.fr',
+}
+
+// WooCommerce API 凭证（从环境变量获取）
+function getWooCredentials(site: Site): { key: string; secret: string } {
+  const key = Deno.env.get(`WOO_${site.toUpperCase()}_KEY`) || ''
+  const secret = Deno.env.get(`WOO_${site.toUpperCase()}_SECRET`) || ''
+  return { key, secret }
+}
+
+/**
+ * 延迟函数
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * 直接调用 WooCommerce REST API 获取完整商品数据
+ * 避免 Edge Function 之间调用的授权问题
+ *
+ * 包含重试机制，处理 Cloudflare/SiteGround 的间歇性错误：
+ * - 速率限制返回 HTML 页面
+ * - 502/503/504 网关错误
+ */
+async function fetchProductFromWooCommerce(site: Site, productId: number, maxRetries = 3): Promise<any> {
+  const credentials = getWooCredentials(site)
+  if (!credentials.key || !credentials.secret) {
+    throw new Error(`Missing WooCommerce credentials for site: ${site}. Key exists: ${!!credentials.key}, Secret exists: ${!!credentials.secret}`)
+  }
+
+  const apiUrl = `${SITE_URLS[site]}/wp-json/wc/v3/products/${productId}`
+  const auth = btoa(`${credentials.key}:${credentials.secret}`)
+
+  let lastError: Error | null = null
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[${site}] Fetching product from: ${apiUrl} (attempt ${attempt}/${maxRetries})`)
+
+      const response = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'JerseysFever-Webhook/1.0',
+        },
+      })
+
+      const contentType = response.headers.get('content-type') || ''
+      console.log(`[${site}] Response status: ${response.status}, content-type: ${contentType}`)
+
+      // 检查是否是可重试的错误
+      const isRetryableStatus = [502, 503, 504, 429, 520, 521, 522, 523, 524].includes(response.status)
+      const isHtmlResponse = contentType.includes('text/html')
+
+      // 如果收到 HTML 响应（通常是 Cloudflare/SiteGround 错误页面），这是可重试的
+      if (isHtmlResponse && response.ok) {
+        const text = await response.text()
+        const errorPreview = text.substring(0, 200)
+        console.warn(`[${site}] Received HTML instead of JSON (likely WAF/rate limit): ${errorPreview}`)
+
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000) // 指数退避: 1s, 2s, 4s (最大5s)
+          console.log(`[${site}] Retrying in ${delay}ms...`)
+          await sleep(delay)
+          continue
+        }
+        throw new Error(`WooCommerce returned HTML response after ${maxRetries} attempts (${contentType}): ${errorPreview}`)
+      }
+
+      if (!response.ok) {
+        const error = await response.text()
+
+        // 可重试的状态码
+        if (isRetryableStatus && attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000)
+          console.log(`[${site}] Got ${response.status}, retrying in ${delay}ms...`)
+          await sleep(delay)
+          continue
+        }
+
+        throw new Error(`WooCommerce API error: ${response.status} - ${error.substring(0, 200)}`)
+      }
+
+      // 最终检查 content-type
+      if (!contentType.includes('application/json')) {
+        const text = await response.text()
+        throw new Error(`WooCommerce returned non-JSON response (${contentType}): ${text.substring(0, 200)}`)
+      }
+
+      return response.json()
+
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+
+      // 网络错误也可重试
+      if (attempt < maxRetries && (
+        lastError.message.includes('fetch failed') ||
+        lastError.message.includes('network') ||
+        lastError.message.includes('timeout')
+      )) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000)
+        console.log(`[${site}] Network error, retrying in ${delay}ms: ${lastError.message}`)
+        await sleep(delay)
+        continue
+      }
+
+      throw lastError
+    }
+  }
+
+  throw lastError || new Error('Unknown error in fetchProductFromWooCommerce')
+}
+
+// ==================== 订单处理函数 ====================
+
+// 转换 WooCommerce 订单数据为数据库格式
+function transformWooOrder(wooOrder: any, site: Site): any {
+  return {
+    order_number: wooOrder.number || wooOrder.id.toString(),
+    site,
+    woo_id: wooOrder.id,
+    status: wooOrder.status,
+    currency: wooOrder.currency || 'USD',
+    total: parseFloat(wooOrder.total) || 0,
+    subtotal: parseFloat(wooOrder.subtotal) || 0,
+    shipping_total: parseFloat(wooOrder.shipping_total) || 0,
+    discount_total: parseFloat(wooOrder.discount_total) || 0,
+    customer_email: wooOrder.billing?.email || null,
+    customer_name: [wooOrder.billing?.first_name, wooOrder.billing?.last_name].filter(Boolean).join(' ') || null,
+    billing_address: wooOrder.billing || {},
+    shipping_address: wooOrder.shipping || {},
+    line_items: (wooOrder.line_items || []).map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      product_id: item.product_id,
+      variation_id: item.variation_id,
+      quantity: item.quantity,
+      price: parseFloat(item.price) || 0,
+      sku: item.sku || '',
+      image: item.image || null,
+      meta_data: item.meta_data || [],
+    })),
+    shipping_lines: (wooOrder.shipping_lines || []).map((line: any) => ({
+      method_title: line.method_title,
+      total: parseFloat(line.total) || 0,
+    })),
+    payment_method: wooOrder.payment_method || null,
+    payment_method_title: wooOrder.payment_method_title || null,
+    date_created: wooOrder.date_created ? new Date(wooOrder.date_created).toISOString() : new Date().toISOString(),
+    date_paid: wooOrder.date_paid ? new Date(wooOrder.date_paid).toISOString() : null,
+    date_completed: wooOrder.date_completed ? new Date(wooOrder.date_completed).toISOString() : null,
+    last_synced_at: new Date().toISOString(),
+  }
+}
+
+// 处理订单 Webhook
+async function handleOrderWebhook(
+  supabase: any,
+  topic: WebhookTopic,
+  order: any,
+  site: Site,
+  deliveryId: string
+): Promise<Response> {
+  const orderId = order.id
+  const orderNumber = order.number || orderId.toString()
+
+  console.log(`[${deliveryId}] Processing order webhook: topic=${topic}, site=${site}, order_id=${orderId}, order_number=${orderNumber}`)
+
+  // 处理订单删除
+  if (topic === 'order.deleted') {
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('site', site)
+      .eq('woo_id', orderId)
+
+    if (error) {
+      console.error(`[${deliveryId}] Error deleting order:`, error)
+    } else {
+      console.log(`[${deliveryId}] Deleted order ${orderNumber} from ${site}`)
+    }
+
+    return new Response(JSON.stringify({ success: true, action: 'deleted', order_number: orderNumber, site }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+
+  // 处理订单创建/更新
+  const orderData = transformWooOrder(order, site)
+
+  const { error } = await supabase
+    .from('orders')
+    .upsert(orderData, {
+      onConflict: 'site,woo_id',
+      ignoreDuplicates: false,
+    })
+
+  if (error) {
+    console.error(`[${deliveryId}] Error upserting order:`, error)
+    throw error
+  }
+
+  const action = topic === 'order.created' ? 'created' : 'updated'
+  console.log(`[${deliveryId}] ${action} order ${orderNumber} from ${site}`)
+
+  return new Response(JSON.stringify({ success: true, action, order_number: orderNumber, site }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
+// ==================== 主入口 ====================
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -37,7 +259,7 @@ Deno.serve(async (req) => {
   try {
     // 获取原始请求体
     const rawBody = await req.text()
-    
+
     // 获取 Webhook 信息
     const topic = req.headers.get('x-wc-webhook-topic') as WebhookTopic
     const source = req.headers.get('x-wc-webhook-source') || ''
@@ -55,9 +277,9 @@ Deno.serve(async (req) => {
     }
 
     // 解析 JSON
-    let product: any
+    let data: any
     try {
-      product = JSON.parse(rawBody)
+      data = JSON.parse(rawBody)
     } catch (parseErr) {
       console.error(`[${deliveryId}] JSON parse error:`, parseErr, 'Raw body:', rawBody.substring(0, 500))
       // 即使解析失败也返回 200，避免 WooCommerce 禁用 webhook
@@ -66,18 +288,10 @@ Deno.serve(async (req) => {
       })
     }
 
-    // 检查是否是 ping 数据（包含 webhook_id 但没有商品数据）
-    if (product && product.webhook_id && !product.id) {
-      console.log(`[${deliveryId}] Webhook ping with webhook_id=${product.webhook_id}`)
+    // 检查是否是 ping 数据（包含 webhook_id 但没有实际数据）
+    if (data && data.webhook_id && !data.id) {
+      console.log(`[${deliveryId}] Webhook ping with webhook_id=${data.webhook_id}`)
       return new Response(JSON.stringify({ success: true, message: 'Webhook ping received' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // 检查必要字段
-    if (!product || typeof product !== 'object' || (!product.id && !product.sku)) {
-      console.log(`[${deliveryId}] Invalid product data, returning success anyway`)
-      return new Response(JSON.stringify({ success: true, message: 'Received but no valid product data' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
@@ -99,35 +313,58 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[${deliveryId}] Processing ${topic} from ${site}: id=${product.id}, type=${product.type}, sku=${product.sku}, name=${product.name}`)
-
     // 创建 Supabase 客户端
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    // 🔴 重要：如果是变体，使用 parent_id；否则使用 id
-    // WooCommerce 更新变体时会发送变体数据，此时 product.id 是变体 ID
-    const isVariation = product.type === 'variation'
-    const productId = isVariation ? product.parent_id : product.id
-
-    if (isVariation) {
-      console.log(`[${deliveryId}] Product is a variation, using parent_id=${product.parent_id} instead of variation_id=${product.id}`)
+    // ==================== 处理订单 Webhook ====================
+    if (topic.startsWith('order.')) {
+      if (!data || !data.id) {
+        console.log(`[${deliveryId}] Invalid order data, returning success anyway`)
+        return new Response(JSON.stringify({ success: true, message: 'Received but no valid order data' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      return await handleOrderWebhook(supabase, topic, data, site, deliveryId)
     }
 
-    // 获取 SKU
-    const sku = product.sku || `WOO-${productId}`
+    // ==================== 处理商品 Webhook ====================
+    const product = data
+
+    // 检查必要字段
+    if (!product || typeof product !== 'object' || (!product.id && !product.sku)) {
+      console.log(`[${deliveryId}] Invalid product data, returning success anyway`)
+      return new Response(JSON.stringify({ success: true, message: 'Received but no valid product data' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // ==================== Webhook 只作为触发器，提取关键信息 ====================
+    // 从 webhook 数据中提取：站点、商品 ID、是否是变体
+    // 然后通过 API 获取完整的主商品数据
+
+    const webhookProductId = product.id
+    const webhookParentId = product.parent_id
+    const isVariation = webhookParentId && webhookParentId > 0
+
+    // 如果是变体，使用 parent_id 获取主商品；否则使用 product.id
+    const mainProductId = isVariation ? webhookParentId : webhookProductId
+
+    console.log(`[${deliveryId}] Processing ${topic} from ${site}: webhook_id=${webhookProductId}, parent_id=${webhookParentId}, isVariation=${isVariation}, mainProductId=${mainProductId}`)
 
     // ==================== 处理商品删除 ====================
     if (topic === 'product.deleted') {
-      // 如果删除的是变体，跳过处理（只有父商品删除才需要更新记录）
+      // 变体删除不处理，只处理主商品删除
       if (isVariation) {
-        console.log(`[${deliveryId}] Skipping variation delete for ${sku} (variation_id=${product.id})`)
-        return new Response(JSON.stringify({ success: true, action: 'skipped', reason: 'variation_delete', sku }), {
+        console.log(`[${deliveryId}] Skipping variation delete (variation_id=${webhookProductId})`)
+        return new Response(JSON.stringify({ success: true, action: 'skipped', reason: 'variation_delete' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
 
+      // 尝试用 webhook 的 SKU 或 ID 找到商品
+      const sku = product.sku || `WOO-${mainProductId}`
       const { data: existing } = await supabase
         .from('products')
         .select('sku, woo_ids, sync_status')
@@ -159,6 +396,68 @@ Deno.serve(async (req) => {
     }
 
     // ==================== 处理商品创建/更新 ====================
+    //
+    // 策略：
+    // - .com 站：通过 API 获取完整数据（图片、分类、属性），更新共享数据和站点数据
+    // - 非 .com 站：直接使用 webhook 数据，只更新站点独立数据（价格、库存、状态）
+    //   非 .com 站跳过变体（因为我们用 SKU 匹配，变体没有 SKU）
+
+    let fullProduct: any
+    let productId: number
+    let sku: string
+
+    if (site === 'com') {
+      // ==================== .com 站：通过 API 获取完整数据 ====================
+      try {
+        console.log(`[${deliveryId}] [.com] 通过 API 获取主商品完整数据 (mainProductId=${mainProductId})...`)
+        fullProduct = await fetchProductFromWooCommerce('com', mainProductId)
+
+        // 验证获取的是主商品（type 应该是 variable 或 simple，不是 variation）
+        if (fullProduct.type === 'variation') {
+          console.error(`[${deliveryId}] [.com] API 返回的是变体数据，跳过处理`)
+          return new Response(JSON.stringify({ success: true, action: 'skipped', reason: 'api_returned_variation' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+
+        console.log(`[${deliveryId}] [.com] API 获取成功: type=${fullProduct.type}, name="${fullProduct.name}", images=${fullProduct.images?.length || 0}`)
+        productId = fullProduct.id
+        sku = fullProduct.sku || `WOO-${productId}`
+      } catch (apiError) {
+        // API 失败，无法处理
+        console.error(`[${deliveryId}] [.com] API 获取失败，跳过处理:`, apiError instanceof Error ? apiError.message : apiError)
+        return new Response(JSON.stringify({
+          success: false,
+          action: 'skipped',
+          reason: 'api_fetch_failed',
+          error: apiError instanceof Error ? apiError.message : 'Unknown error'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+    } else {
+      // ==================== 非 .com 站：使用 webhook 数据 ====================
+      // 跳过变体（变体没有 SKU，我们无法匹配）
+      if (isVariation) {
+        console.log(`[${deliveryId}] [${site}] 跳过变体 webhook (parent_id=${webhookParentId})`)
+        return new Response(JSON.stringify({ success: true, action: 'skipped', reason: 'non_com_variation' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      // 必须有 SKU 才能匹配
+      if (!product.sku) {
+        console.log(`[${deliveryId}] [${site}] 商品没有 SKU，跳过`)
+        return new Response(JSON.stringify({ success: true, action: 'skipped', reason: 'no_sku' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      fullProduct = product // 使用 webhook 数据
+      productId = product.id
+      sku = product.sku
+      console.log(`[${deliveryId}] [${site}] 使用 webhook 数据: sku=${sku}, name="${product.name}"`)
+    }
 
     // 查找现有商品
     const { data: existing } = await supabase
@@ -167,27 +466,28 @@ Deno.serve(async (req) => {
       .eq('sku', sku)
       .single()
 
-    // 提取商品数据
-    const salePrice = parseFloat(product.sale_price) || 0
-    const regularPrice = parseFloat(product.regular_price) || 0
-    const currentPrice = parseFloat(product.price) || 0
+    // 提取商品数据（使用完整数据）
+    const salePrice = parseFloat(fullProduct.sale_price) || 0
+    const regularPrice = parseFloat(fullProduct.regular_price) || 0
+    const currentPrice = parseFloat(fullProduct.price) || 0
     const productPrice = salePrice || currentPrice || regularPrice // 优先促销价
     const productRegularPrice = regularPrice || currentPrice // 原价/划线价
-    const productStockQty = product.stock_quantity ?? 100
-    const productStockStatus = product.stock_status || 'instock'
-    const productStatus = product.status || 'publish'
-    const productDateModified = product.date_modified || null
-    const productDateCreated = product.date_created || null
+    const productStockQty = fullProduct.stock_quantity ?? 100
+    const productStockStatus = fullProduct.stock_status || 'instock'
+    const productStatus = fullProduct.status || 'publish'
+    const productDateModified = fullProduct.date_modified || null
+    const productDateCreated = fullProduct.date_created || null
 
-    // 提取图片 URL
-    const images = (product.images || []).map((img: { src: string }) => img.src)
+    // 提取图片 URL（使用完整数据，确保获取所有图片）
+    const images = (fullProduct.images || []).map((img: { src: string }) => img.src)
+    console.log(`[${deliveryId}] 提取到 ${images.length} 张图片`)
 
     // 提取分类名称
-    const categories = (product.categories || []).map((c: { name: string }) => c.name)
+    const categories = (fullProduct.categories || []).map((c: { name: string }) => c.name)
 
-    // 提取商品属性（处理 WooCommerce 的属性名格式）
+    // 提取商品属性（处理 WooCommerce 的属性名格式）- 使用完整数据
     const attributes: Record<string, string | string[]> = {}
-    for (const attr of product.attributes || []) {
+    for (const attr of fullProduct.attributes || []) {
       const attrName = (attr.name || '').toLowerCase().replace(/[^a-z]/g, '') // 移除非字母字符
       const value = attr.options?.[0] || ''
       
@@ -209,25 +509,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 构建该站点的内容
+    // 构建该站点的内容 - 使用完整数据
     const siteContent = {
-      name: product.name,
-      description: product.description || '',
-      short_description: product.short_description || '',
+      name: fullProduct.name,
+      description: fullProduct.description || '',
+      short_description: fullProduct.short_description || '',
     }
 
     if (!existing) {
       // ==================== 新建商品 ====================
-      // 初始化所有站点的 JSONB 字段
-      const newProduct = {
+      // 共享数据只从 .com 站设置，其他站留空
+      const newProduct: Record<string, unknown> = {
         sku,
-        name: product.name,
-        slug: product.slug || null,
-        images,
-        categories,
-        attributes: Object.keys(attributes).length > 0 ? attributes : {},
-        
-        // 各站点独立数据（使用父商品 ID，不是变体 ID）
+        // 各站点独立数据
         woo_ids: { [site]: productId },
         prices: { [site]: productPrice },
         regular_prices: { [site]: productRegularPrice },
@@ -237,9 +531,26 @@ Deno.serve(async (req) => {
         content: { [site]: siteContent },
         sync_status: { [site]: 'synced' },
         date_modified: productDateModified ? { [site]: productDateModified } : {},
-        published_at: productDateCreated, // 发布时间取 date_created
-        
         last_synced_at: new Date().toISOString(),
+      }
+
+      // 共享数据只从 .com 站设置
+      if (site === 'com') {
+        newProduct.name = fullProduct.name
+        newProduct.slug = fullProduct.slug || null
+        newProduct.images = images
+        newProduct.categories = categories
+        newProduct.attributes = Object.keys(attributes).length > 0 ? attributes : {}
+        newProduct.published_at = productDateCreated
+        console.log(`[${deliveryId}] Creating product from .com with shared data: ${images.length} images`)
+      } else {
+        // 非 .com 站：设置最小共享数据（name 是必填字段）
+        newProduct.name = fullProduct.name || sku
+        newProduct.slug = null
+        newProduct.images = []
+        newProduct.categories = []
+        newProduct.attributes = {}
+        console.log(`[${deliveryId}] Creating product from ${site} (shared data will come from .com later)`)
       }
 
       const { error } = await supabase.from('products').insert(newProduct)
@@ -253,7 +564,7 @@ Deno.serve(async (req) => {
     } else {
       // ==================== 更新现有商品 ====================
       
-      // 智能合并站点内容：如果 webhook 收到的是空的，保留现有非空数据
+      // 智能合并站点内容：如果获取的数据是空的，保留现有非空数据
       const existingSiteContent = existing.content?.[site] || {}
       const mergedSiteContent = {
         name: siteContent.name || existingSiteContent.name || '',
@@ -277,23 +588,24 @@ Deno.serve(async (req) => {
 
       // 如果是主站 (.com)，也更新共享数据（但要智能合并，不覆盖已有数据）
       if (site === 'com') {
-        // 名称：优先使用 webhook 数据
-        if (product.name) {
-          updateData.name = product.name
+        // 名称：优先使用完整数据
+        if (fullProduct.name) {
+          updateData.name = fullProduct.name
         }
-        updateData.slug = product.slug || existing.slug || null
+        updateData.slug = fullProduct.slug || existing.slug || null
         
-        // 图片：只有当 webhook 有图片时才更新（避免覆盖已有图片）
+        // 图片：只有当有图片时才更新（避免覆盖已有图片）
         if (images && images.length > 0) {
           updateData.images = images
+          console.log(`[${deliveryId}] 更新图片: ${images.length} 张`)
         }
         
-        // 分类：只有当 webhook 有分类时才更新（避免覆盖已有分类）
+        // 分类：只有当有分类时才更新（避免覆盖已有分类）
         if (categories && categories.length > 0) {
           updateData.categories = categories
         }
         
-        // 属性：只有当 webhook 有属性时才更新
+        // 属性：只有当有属性时才更新
         if (Object.keys(attributes).length > 0) {
           updateData.attributes = attributes
         }
@@ -302,6 +614,9 @@ Deno.serve(async (req) => {
         if (!existing.published_at && productDateCreated) {
           updateData.published_at = productDateCreated
         }
+      } else {
+        // 非 .com 站：不更新共享数据
+        console.log(`[${deliveryId}] Skipping shared data update for ${site} (only from .com)`)
       }
 
       const { error } = await supabase
@@ -314,7 +629,7 @@ Deno.serve(async (req) => {
         throw error
       }
 
-      console.log(`[${deliveryId}] Updated ${site} data for ${sku} (smart merge applied)`)
+      console.log(`[${deliveryId}] Updated ${site} site-specific data for ${sku}`)
     }
 
     return new Response(JSON.stringify({

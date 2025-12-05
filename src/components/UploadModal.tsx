@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { Upload, Loader2, Sparkles, Send, Trash2, GripVertical, X, Plus, ChevronDown, ChevronUp, Check, AlertCircle } from 'lucide-react';
+import { Upload, Loader2, Sparkles, Send, Trash2, GripVertical, X, Plus, ChevronDown, ChevronUp, Check, AlertCircle, Link, Clipboard } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -154,6 +154,12 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [expandedSite, setExpandedSite] = useState<SiteKey | null>(null);
   const [selectedModel, setSelectedModel] = useState<GeminiModel>(getGeminiModel());
   
+  // 图片上传相关状态
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [imageUrl, setImageUrl] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  
   // 每个草稿的操作状态（异步支持）
   const [draftStatuses, setDraftStatuses] = useState<Record<string, DraftStatus>>({});
 
@@ -270,6 +276,163 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
     }
 
     e.target.value = '';
+  };
+
+  // 处理粘贴图片
+  const handlePaste = useCallback(async (e: ClipboardEvent) => {
+    if (!selectedDraft) return;
+    
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          imageFiles.push(file);
+        }
+      }
+    }
+
+    if (imageFiles.length === 0) return;
+    
+    e.preventDefault();
+    setImageError(null);
+
+    try {
+      const newImages: UploadedImage[] = await Promise.all(
+        imageFiles.map(async (file) => {
+          const base64 = await fileToBase64(file);
+          return {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            url: URL.createObjectURL(file),
+            file,
+            base64,
+          };
+        })
+      );
+
+      const updated = { ...selectedDraft, images: [...selectedDraft.images, ...newImages] };
+      handleUpdateDraft(updated);
+
+      // 如果是第一张图片，自动进行 AI 识别
+      if (selectedDraft.images.length === 0 && newImages[0].base64) {
+        handleRecognizeAttributes(selectedDraft.id, updated, newImages[0].base64);
+      }
+    } catch (err) {
+      console.error('粘贴图片失败:', err);
+      setImageError('粘贴图片失败');
+    }
+  }, [selectedDraft, handleUpdateDraft]);
+
+  // 监听粘贴事件
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    document.addEventListener('paste', handlePaste);
+    return () => {
+      document.removeEventListener('paste', handlePaste);
+    };
+  }, [isOpen, handlePaste]);
+
+  // 从 URL 下载图片
+  const handleUrlDownload = async () => {
+    if (!selectedDraft || !imageUrl.trim()) return;
+
+    setUrlLoading(true);
+    setImageError(null);
+
+    try {
+      // 使用 fetch 获取图片
+      const response = await fetch(imageUrl, { mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`获取图片失败: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (!blob.type.startsWith('image/')) {
+        throw new Error('链接不是有效的图片');
+      }
+
+      // 转换为 base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      // 从 URL 提取文件名
+      const urlPath = new URL(imageUrl).pathname;
+      const filename = urlPath.split('/').pop() || `download-${Date.now()}.jpg`;
+
+      const newImage: UploadedImage = {
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        url: URL.createObjectURL(blob),
+        file: new File([blob], filename, { type: blob.type }),
+        base64,
+      };
+
+      const updated = { ...selectedDraft, images: [...selectedDraft.images, newImage] };
+      handleUpdateDraft(updated);
+
+      // 如果是第一张图片，自动进行 AI 识别
+      if (selectedDraft.images.length === 0 && base64) {
+        handleRecognizeAttributes(selectedDraft.id, updated, base64);
+      }
+
+      setImageUrl('');
+      setShowUrlInput(false);
+    } catch (err) {
+      console.error('URL 下载失败:', err);
+      // 如果 CORS 失败，尝试直接使用 URL
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        try {
+          const testImg = new Image();
+          testImg.crossOrigin = 'anonymous';
+          await new Promise((resolve, reject) => {
+            testImg.onload = resolve;
+            testImg.onerror = reject;
+            testImg.src = imageUrl;
+          });
+          // 图片可以加载，尝试通过 canvas 获取 base64
+          const canvas = document.createElement('canvas');
+          canvas.width = testImg.naturalWidth;
+          canvas.height = testImg.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(testImg, 0, 0);
+          const dataUrl = canvas.toDataURL('image/jpeg');
+          const base64 = dataUrl.split(',')[1];
+          
+          const newImage: UploadedImage = {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            url: imageUrl,
+            base64,
+          };
+
+          const updated = { ...selectedDraft, images: [...selectedDraft.images, newImage] };
+          handleUpdateDraft(updated);
+
+          if (selectedDraft.images.length === 0 && base64) {
+            handleRecognizeAttributes(selectedDraft.id, updated, base64);
+          }
+
+          setImageUrl('');
+          setShowUrlInput(false);
+          return;
+        } catch {
+          setImageError('无法加载图片，请检查链接是否有效或尝试下载后手动上传');
+          return;
+        }
+      }
+      setImageError(err instanceof Error ? err.message : '下载图片失败');
+    } finally {
+      setUrlLoading(false);
+    }
   };
 
   // AI 识别属性（异步）
@@ -506,7 +669,8 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const team = selectedDraft ? getTeamFromCategories(selectedDraft.info.categories) : '';
   const title = selectedDraft ? generateProductTitle(selectedDraft.info) : '';
   const sku = selectedDraft && team ? generateSKU(team, selectedDraft.info.season, selectedDraft.info.type) : '';
-  const canPublish = selectedDraft && selectedDraft.images.length > 0 && team && selectedDraft.selectedSites.length > 0;
+  const hasAIContent = selectedDraft && Object.keys(selectedDraft.content).length > 0;
+  const canPublish = selectedDraft && selectedDraft.images.length > 0 && team && selectedDraft.selectedSites.length > 0 && hasAIContent;
   
   // 统计
   const readyToGenerate = drafts.filter(d => {
@@ -732,9 +896,10 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
                               onRemove={() => handleRemoveImage(image.id)}
                             />
                           ))}
+                          {/* 文件上传按钮 */}
                           <label className="aspect-square border-2 border-dashed border-gray-200 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-gray-400 hover:text-gray-500 cursor-pointer transition-colors">
                             <Plus className="w-5 h-5" />
-                            <span className="text-xs mt-1">添加</span>
+                            <span className="text-xs mt-1">文件</span>
                             <input
                               type="file"
                               accept="image/jpeg,image/png,image/webp"
@@ -743,9 +908,93 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
                               onChange={handleAddImages}
                             />
                           </label>
+                          {/* URL 下载按钮 */}
+                          <button
+                            type="button"
+                            onClick={() => setShowUrlInput(!showUrlInput)}
+                            disabled={urlLoading}
+                            className={`aspect-square border-2 border-dashed rounded-lg flex flex-col items-center justify-center transition-colors ${
+                              showUrlInput
+                                ? 'border-blue-400 bg-blue-50 text-blue-500'
+                                : urlLoading
+                                  ? 'border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed'
+                                  : 'border-gray-200 text-gray-400 hover:border-gray-400 hover:text-gray-500'
+                            }`}
+                            title="从链接下载图片"
+                          >
+                            {urlLoading ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <Link className="w-5 h-5" />
+                            )}
+                            <span className="text-xs mt-1">链接</span>
+                          </button>
                         </div>
                       </SortableContext>
                     </DndContext>
+
+                    {/* URL 输入框 */}
+                    {showUrlInput && (
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          type="url"
+                          value={imageUrl}
+                          onChange={(e) => setImageUrl(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleUrlDownload();
+                            }
+                          }}
+                          placeholder="输入图片链接，如 https://example.com/image.jpg"
+                          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          disabled={urlLoading}
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={handleUrlDownload}
+                          disabled={!imageUrl.trim() || urlLoading}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            !imageUrl.trim() || urlLoading
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              : 'bg-blue-500 text-white hover:bg-blue-600'
+                          }`}
+                        >
+                          {urlLoading ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            '下载'
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowUrlInput(false);
+                            setImageUrl('');
+                          }}
+                          className="px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-100"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 错误提示 */}
+                    {imageError && (
+                      <div className="mt-2 text-xs text-red-500 bg-red-50 rounded-lg p-2 flex items-center gap-2">
+                        <AlertCircle className="w-3 h-3" />
+                        {imageError}
+                      </div>
+                    )}
+
+                    {/* 粘贴提示 */}
+                    {selectedDraft.images.length === 0 && (
+                      <div className="mt-3 flex items-center justify-center gap-2 text-xs text-gray-400">
+                        <Clipboard className="w-3.5 h-3.5" />
+                        <span>可直接粘贴图片 (Ctrl/Cmd + V)</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* 表单 */}
@@ -851,18 +1100,29 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
                         )}
                         AI 生成
                       </button>
-                      <button
-                        onClick={() => handlePublish()}
-                        disabled={!canPublish || selectedStatus?.isGenerating || selectedStatus?.isPublishing}
-                        className="flex items-center gap-1.5 px-5 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {selectedStatus?.isPublishing ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
+                      <div className="relative group">
+                        <button
+                          onClick={() => handlePublish()}
+                          disabled={!canPublish || selectedStatus?.isGenerating || selectedStatus?.isPublishing}
+                          className="flex items-center gap-1.5 px-5 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {selectedStatus?.isPublishing ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Send className="w-4 h-4" />
+                          )}
+                          发布
+                        </button>
+                        {/* 发布条件提示 */}
+                        {!canPublish && selectedDraft && !selectedStatus?.isPublishing && (
+                          <div className="absolute bottom-full right-0 mb-2 px-3 py-2 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            {selectedDraft.images.length === 0 ? '请先上传图片' :
+                             !team ? '请先选择球队分类' :
+                             selectedDraft.selectedSites.length === 0 ? '请先选择发布站点' :
+                             !hasAIContent ? '请先点击「AI 生成」生成商品资料' : ''}
+                          </div>
                         )}
-                        发布
-                      </button>
+                      </div>
                     </div>
                   </div>
 

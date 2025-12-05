@@ -1,4 +1,5 @@
-import { Package, Eye, ExternalLink, Trash2, Loader2, ChevronLeft, ChevronRight, CheckSquare, Square, MinusSquare } from 'lucide-react';
+import { useState } from 'react';
+import { Package, Eye, ExternalLink, Trash2, Loader2, ChevronLeft, ChevronRight, CheckSquare, Square, MinusSquare, RefreshCw, ChevronRightIcon } from 'lucide-react';
 import { getMainSitePrice, getMainSiteStatus, type LocalProduct } from '../../lib/products';
 import type { SiteKey } from '../../lib/types';
 
@@ -20,7 +21,9 @@ interface ProductTableProps {
   onPerPageChange: (perPage: number) => void;
   onSelect: (product: LocalProduct) => void;
   onDelete: (sku: string) => void;
+  onSync: (sku: string) => void;
   deletingSku: string | null;
+  syncingSku: string | null;
   hasFilters: boolean;
   onUpload: () => void;
   // 批量选择
@@ -41,15 +44,21 @@ export function ProductTable({
   onPerPageChange,
   onSelect,
   onDelete,
+  onSync,
   deletingSku,
+  syncingSku,
   hasFilters,
   onUpload,
   selectedSkus,
   onSelectionChange,
 }: ProductTableProps) {
+  // 记录上次选中的索引（用于 Shift 范围选择）
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+
   // 全选状态
   const allSelected = products.length > 0 && products.every(p => selectedSkus.has(p.sku));
   const someSelected = products.some(p => selectedSkus.has(p.sku));
+  const isSelectionMode = selectedSkus.size > 0;
 
   const toggleAll = () => {
     if (allSelected) {
@@ -65,7 +74,7 @@ export function ProductTable({
     }
   };
 
-  const toggleOne = (sku: string) => {
+  const toggleOne = (sku: string, index?: number) => {
     const newSet = new Set(selectedSkus);
     if (newSet.has(sku)) {
       newSet.delete(sku);
@@ -73,6 +82,41 @@ export function ProductTable({
       newSet.add(sku);
     }
     onSelectionChange(newSet);
+    if (index !== undefined) {
+      setLastSelectedIndex(index);
+    }
+  };
+
+  // 智能行点击：选择模式下点击行切换选择，否则打开详情
+  const handleRowClick = (e: React.MouseEvent, product: LocalProduct, index: number) => {
+    // Shift+点击：范围选择
+    if (e.shiftKey && lastSelectedIndex !== null) {
+      e.preventDefault();
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      const newSet = new Set(selectedSkus);
+      for (let i = start; i <= end; i++) {
+        newSet.add(products[i].sku);
+      }
+      onSelectionChange(newSet);
+      return;
+    }
+
+    // Ctrl/Cmd+点击：切换单个选择
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      toggleOne(product.sku, index);
+      return;
+    }
+
+    // 选择模式下：点击行切换选择
+    if (isSelectionMode) {
+      toggleOne(product.sku, index);
+      return;
+    }
+
+    // 普通模式：打开详情
+    onSelect(product);
   };
   if (isLoading) {
     return (
@@ -133,21 +177,21 @@ export function ProductTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {products.map((product) => {
+          {products.map((product, index) => {
             const mainPrice = getMainSitePrice(product);
             const mainStatus = getMainSiteStatus(product);
             const primaryWooId = product.woo_ids?.com;
 
             return (
-              <tr 
-                key={product.sku} 
+              <tr
+                key={product.sku}
                 className={`hover:bg-gray-50 cursor-pointer transition-colors ${selectedSkus.has(product.sku) ? 'bg-blue-50' : ''}`}
-                onClick={() => onSelect(product)}
+                onClick={(e) => handleRowClick(e, product, index)}
               >
                 {/* 选择框 */}
                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <button
-                    onClick={() => toggleOne(product.sku)}
+                    onClick={() => toggleOne(product.sku, index)}
                     className="p-1 text-gray-400 hover:text-gray-600 rounded"
                   >
                     {selectedSkus.has(product.sku) ? (
@@ -232,17 +276,31 @@ export function ProductTable({
                     >
                       <Eye className="w-4 h-4" />
                     </button>
-                    
+
                     {primaryWooId && (
-                      <a
-                        href={`${SITE_URLS.com}/?p=${primaryWooId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                        title="在主站查看"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
+                      <>
+                        <a
+                          href={`${SITE_URLS.com}/?p=${primaryWooId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                          title="在主站查看"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                        <button
+                          onClick={() => onSync(product.sku)}
+                          disabled={syncingSku === product.sku}
+                          className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                          title="同步到站点"
+                        >
+                          {syncingSku === product.sku ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-4 h-4" />
+                          )}
+                        </button>
+                      </>
                     )}
 
                     <button

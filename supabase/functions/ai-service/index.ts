@@ -68,6 +68,7 @@ async function callGeminiAPI(
   responseSchema: any
 ): Promise<any> {
   const url = `${GEMINI_API_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`
+  console.log('Calling Gemini API, model:', model, 'image size:', imageBase64?.length || 0)
 
   const requestBody = {
     contents: [
@@ -90,14 +91,21 @@ async function callGeminiAPI(
     },
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    })
+  } catch (fetchError) {
+    console.error('Fetch error:', fetchError)
+    throw new Error(`Network error calling Gemini API: ${fetchError}`)
+  }
 
   if (!response.ok) {
     const error = await response.text()
+    console.error('Gemini API error response:', response.status, error)
     throw new Error(`Gemini API error: ${response.status} - ${error}`)
   }
 
@@ -107,7 +115,8 @@ async function callGeminiAPI(
   try {
     return JSON.parse(text)
   } catch {
-    throw new Error(`Failed to parse Gemini response: ${text}`)
+    console.error('Failed to parse Gemini response:', text.substring(0, 500))
+    throw new Error(`Failed to parse Gemini response: ${text.substring(0, 200)}`)
   }
 }
 
@@ -402,10 +411,36 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body: RequestBody = await req.json()
+    // 检查 API Key
+    if (!GEMINI_API_KEY) {
+      console.error('GEMINI_API_KEY is not set')
+      return new Response(JSON.stringify({ 
+        error: 'GEMINI_API_KEY is not configured' 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    let body: RequestBody
+    try {
+      body = await req.json()
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError)
+      return new Response(JSON.stringify({ 
+        error: 'Invalid JSON in request body' 
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    
+    console.log('Received action:', body.action)
+    console.log('Model:', body.model || 'default')
 
     switch (body.action) {
       case 'recognize-attributes': {
+        console.log('Processing recognize-attributes, model:', body.model)
         const result = await recognizeAttributes(
           body.imageBase64,
           body.model || 'gemini-2.5-flash',
@@ -417,6 +452,7 @@ Deno.serve(async (req) => {
       }
 
       case 'generate-content': {
+        console.log('Processing generate-content, language:', body.language, 'model:', body.model)
         const result = await generateContent(
           body.imageBase64,
           body.language,
@@ -437,8 +473,10 @@ Deno.serve(async (req) => {
     }
   } catch (error) {
     console.error('Error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Error message:', errorMessage)
     return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+      error: errorMessage
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -2,15 +2,41 @@ import { createClient } from '@supabase/supabase-js';
 import type { SiteKey, WooCategory } from './types';
 
 // 支持多种环境变量命名（Vite / Vercel 集成）
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL 
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   || import.meta.env.SUPABASE_URL
   || import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY 
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
   || import.meta.env.SUPABASE_ANON_KEY
   || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
+// 验证环境变量
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('Missing Supabase environment variables:', {
+    url: !!supabaseUrl,
+    key: !!supabaseAnonKey,
+  });
+  throw new Error(
+    'Missing Supabase environment variables. Please check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY'
+  );
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+    // 使用 localStorage 存储 session
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    // 刷新 token 的提前时间（秒）
+    storageKey: 'jerseysfever-auth',
+  },
+  global: {
+    headers: {
+      'x-client-info': 'jerseysfever-ops',
+    },
+  },
+});
 
 // 数据库中的分类记录
 export interface DbCategory {

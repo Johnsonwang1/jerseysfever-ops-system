@@ -1,14 +1,20 @@
 /**
  * Supabase Edge Function: woo-sync
  * 统一的 WooCommerce 同步服务
- * 
+ *
  * 支持的 actions:
+ * - get-product: 从 WooCommerce 获取单个商品完整数据
  * - publish-product: 创建新商品到指定站点
  * - sync-product: 同步单个商品到指定站点
  * - sync-products-batch: 批量同步多个商品
  * - sync-all: 全量同步所有站点
  * - cleanup-images: 清理商品图片
  * - register-webhooks: 注册 Webhook 到所有站点
+ *
+ * 订单相关:
+ * - sync-orders: 全量同步订单
+ * - update-order-status: 更新订单状态
+ * - add-order-note: 添加订单备注
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -89,7 +95,64 @@ interface RegisterWebhooksRequest {
   webhookUrl: string
 }
 
-type RequestBody = SyncProductRequest | SyncProductsBatchRequest | SyncAllRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest
+// 获取单个商品完整数据（供 woo-webhook 调用）
+interface GetProductRequest {
+  action: 'get-product'
+  site: SiteKey
+  productId: number
+}
+
+// 删除商品请求
+interface DeleteProductRequest {
+  action: 'delete-product'
+  sku: string
+  sites: SiteKey[]
+  deleteLocal?: boolean  // 是否同时删除本地数据库记录，默认 true
+}
+
+// 从站点拉取商品数据到 PIM（批量）
+interface PullProductsRequest {
+  action: 'pull-products'
+  skus: string[]
+  site: SiteKey  // 从哪个站点拉取数据（通常是 com）
+}
+
+// ==================== 订单相关请求类型 ====================
+
+// 同步订单请求
+interface SyncOrdersRequest {
+  action: 'sync-orders'
+  site?: SiteKey  // 可选，不传则同步所有站点
+  status?: string  // 可选，筛选订单状态
+  after?: string   // 可选，同步此日期之后的订单（ISO 格式）
+  per_page?: number  // 每页数量，默认 100
+}
+
+// 更新订单状态请求
+interface UpdateOrderStatusRequest {
+  action: 'update-order-status'
+  site: SiteKey
+  woo_id: number
+  status: string
+}
+
+// 添加订单备注请求
+interface AddOrderNoteRequest {
+  action: 'add-order-note'
+  site: SiteKey
+  woo_id: number
+  note: string
+  customer_note?: boolean  // 是否发送给客户，默认 false
+}
+
+// 获取单个订单请求
+interface GetOrderRequest {
+  action: 'get-order'
+  site: SiteKey
+  woo_id: number
+}
+
+type RequestBody = SyncProductRequest | SyncProductsBatchRequest | SyncAllRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest
 
 interface SyncResult {
   site: SiteKey
@@ -159,17 +222,24 @@ class WooCommerceClient {
 
   private async request<T>(endpoint: string, options: RequestInit = {}, retries = 3): Promise<T> {
     let lastError: Error | null = null
-    
+
     for (let attempt = 1; attempt <= retries; attempt++) {
+      // 创建 AbortController 用于超时控制
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 60000) // 60秒超时
+
       try {
         const response = await fetch(`${this.baseUrl}${endpoint}`, {
           ...options,
+          signal: controller.signal,
           headers: {
             'Authorization': `Basic ${this.auth}`,
             'Content-Type': 'application/json',
             ...options.headers,
           },
         })
+
+        clearTimeout(timeoutId)
 
         if (!response.ok) {
           const error = await response.text()
@@ -184,7 +254,14 @@ class WooCommerceClient {
 
         return response.json()
       } catch (err) {
+        clearTimeout(timeoutId)
         lastError = err instanceof Error ? err : new Error(String(err))
+
+        // 处理超时错误
+        if (err instanceof Error && err.name === 'AbortError') {
+          lastError = new Error(`请求超时 (60s)`)
+        }
+
         if (attempt < retries && !lastError.message.includes('401') && !lastError.message.includes('404')) {
           console.warn(`[${this.site}] 请求失败，重试 ${attempt}/${retries}:`, lastError.message)
           await new Promise(r => setTimeout(r, 2000 * attempt))
@@ -349,7 +426,7 @@ class WooCommerceClient {
       { id: ATTRIBUTE_IDS.event, visible: false, variation: false, options: data.attributes.events },
     ]
 
-    // 创建主商品（🔴 修复库存问题：添加 stock_status 和 manage_stock）
+    // 创建主商品（主商品统一管理库存，变体继承）
     const product = await this.request<any>('/products', {
       method: 'POST',
       body: JSON.stringify({
@@ -362,23 +439,23 @@ class WooCommerceClient {
         images: data.imageUrls.map(src => ({ src })),
         attributes: productAttributes,
         status: 'publish',
-        // 🔴 修复：主商品设置为有货，让变体管理库存
-        manage_stock: false,
+        // ✅ 主商品统一管理库存
+        manage_stock: true,
+        stock_quantity: 100,
         stock_status: 'instock',
       }),
     })
 
-    // 创建变体（设置划线价为售价的2倍）
+    // 创建变体（设置划线价为售价的2倍，变体不管理库存，继承主商品）
     const salePrice = parseFloat(data.price)
     const regularPrice = (salePrice * 2).toFixed(2)
-    
+
     const variationsData = sizes.map(size => ({
       regular_price: regularPrice,  // 划线价（原价）
       sale_price: data.price,       // 实际售价
       attributes: [{ id: ATTRIBUTE_IDS.size, option: size }],
-      stock_quantity: 100,
-      manage_stock: true,
-      stock_status: 'instock',
+      // ✅ 变体不管理库存，继承主商品的库存设置
+      manage_stock: false,
     }))
 
     await this.request(`/products/${product.id}/variations/batch`, {
@@ -407,7 +484,7 @@ class WooCommerceClient {
 
   // 注册 Webhook
   async registerWebhook(
-    topic: 'product.created' | 'product.updated' | 'product.deleted',
+    topic: 'product.created' | 'product.updated' | 'product.deleted' | 'order.created' | 'order.updated' | 'order.deleted',
     deliveryUrl: string,
     secret?: string
   ): Promise<{ id: number; name: string }> {
@@ -440,6 +517,106 @@ class WooCommerceClient {
     await this.request(`/webhooks/${id}?force=true`, {
       method: 'DELETE',
     })
+  }
+
+  // 删除商品（永久删除，跳过回收站）
+  async deleteProduct(id: number): Promise<void> {
+    await this.request(`/products/${id}?force=true`, {
+      method: 'DELETE',
+    })
+  }
+
+  // ==================== 订单 API ====================
+
+  // 获取订单列表
+  async getOrders(params: {
+    page?: number
+    per_page?: number
+    status?: string
+    after?: string
+    before?: string
+    order?: 'asc' | 'desc'
+    orderby?: string
+  } = {}): Promise<any[]> {
+    const queryParams = new URLSearchParams()
+    if (params.page) queryParams.set('page', params.page.toString())
+    if (params.per_page) queryParams.set('per_page', params.per_page.toString())
+    if (params.status) queryParams.set('status', params.status)
+    if (params.after) queryParams.set('after', params.after)
+    if (params.before) queryParams.set('before', params.before)
+    if (params.order) queryParams.set('order', params.order)
+    if (params.orderby) queryParams.set('orderby', params.orderby)
+
+    const query = queryParams.toString()
+    return this.request(`/orders${query ? `?${query}` : ''}`)
+  }
+
+  // 获取所有订单（分页遍历）
+  async getAllOrders(params: {
+    status?: string
+    after?: string
+    per_page?: number
+    max_pages?: number  // 最大页数限制
+  } = {}): Promise<any[]> {
+    const allOrders: any[] = []
+    let page = 1
+    const perPage = params.per_page || 100  // 每页数量
+    const maxPages = params.max_pages || 500  // 最多获取 500 页 = 50000 条订单
+
+    while (page <= maxPages) {
+      const orders = await this.getOrders({
+        page,
+        per_page: perPage,
+        status: params.status,
+        after: params.after,
+        order: 'desc',
+        orderby: 'date',
+      })
+      allOrders.push(...orders)
+      console.log(`[${this.site}] 获取订单第 ${page} 页: ${orders.length} 条 (累计 ${allOrders.length})`)
+      if (orders.length < perPage) break
+      page++
+
+      // 每 10 页暂停 1 秒，避免请求过快
+      if (page % 10 === 0) {
+        await new Promise(r => setTimeout(r, 1000))
+      }
+    }
+
+    if (page > maxPages) {
+      console.warn(`[${this.site}] 达到最大页数限制 (${maxPages})，可能有更多订单未同步`)
+    }
+
+    return allOrders
+  }
+
+  // 获取单个订单
+  async getOrder(id: number): Promise<any> {
+    return this.request(`/orders/${id}`)
+  }
+
+  // 更新订单状态
+  async updateOrderStatus(id: number, status: string): Promise<any> {
+    return this.request(`/orders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    })
+  }
+
+  // 添加订单备注
+  async addOrderNote(orderId: number, note: string, customerNote = false): Promise<any> {
+    return this.request(`/orders/${orderId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify({
+        note,
+        customer_note: customerNote,
+      }),
+    })
+  }
+
+  // 获取订单备注
+  async getOrderNotes(orderId: number): Promise<any[]> {
+    return this.request(`/orders/${orderId}/notes`)
   }
 }
 
@@ -658,32 +835,45 @@ async function syncSingleSite(
     if (existingProduct.type === 'simple') {
       console.log(`[${site}] 转换简单商品为可变商品...`)
       await client.convertToVariableProduct(wooId, sizes)
-      
+
+      // 主商品统一管理库存
+      await client.updateProduct(wooId, {
+        manage_stock: true,
+        stock_quantity: siteStockQty,
+        stock_status: siteStockStatus,
+      })
+
       const variationsData = sizes.map(size => ({
         regular_price: siteRegularPrice?.toString() || sitePrice.toString(),
         sale_price: siteRegularPrice ? sitePrice.toString() : undefined,
         attributes: [{ id: ATTRIBUTE_IDS.size, option: size }],
-        stock_quantity: Math.floor(siteStockQty / sizes.length),
-        manage_stock: true,
-        stock_status: siteStockStatus,
+        // ✅ 变体不管理库存，继承主商品
+        manage_stock: false,
       }))
-      
+
       await client.batchCreateVariations(wooId, variationsData)
-      console.log(`[${site}] 创建 ${sizes.length} 个变体`)
+      console.log(`[${site}] 创建 ${sizes.length} 个变体（主商品管理库存）`)
     } else {
       const variations = await client.getProductVariations(wooId)
       
       if (variations.length === 0) {
         console.log(`[${site}] 创建变体...`)
+        // 主商品统一管理库存
+        await client.updateProduct(wooId, {
+          manage_stock: true,
+          stock_quantity: siteStockQty,
+          stock_status: siteStockStatus,
+        })
+
         const variationsData = sizes.map(size => ({
           regular_price: siteRegularPrice?.toString() || sitePrice.toString(),
           sale_price: siteRegularPrice ? sitePrice.toString() : undefined,
           attributes: [{ id: ATTRIBUTE_IDS.size, option: size }],
-          stock_quantity: Math.floor(siteStockQty / sizes.length),
-          manage_stock: true,
-          stock_status: siteStockStatus,
+          // ✅ 变体不管理库存，继承主商品
+          manage_stock: false,
         }))
         await client.batchCreateVariations(wooId, variationsData)
+        console.log(`[${site}] 创建 ${sizes.length} 个变体（主商品管理库存）`)
       } else {
         // 更新变体价格
         const updates = variations.map(v => {
@@ -1203,13 +1393,17 @@ async function registerWebhooks(
     try {
       const client = new WooCommerceClient(site)
 
-      // 注册三种事件
+      // 注册商品事件
       await client.registerWebhook('product.created', webhookUrl)
       await client.registerWebhook('product.updated', webhookUrl)
       await client.registerWebhook('product.deleted', webhookUrl)
 
+      // 注册订单事件
+      await client.registerWebhook('order.created', webhookUrl)
+      await client.registerWebhook('order.updated', webhookUrl)
+
       results[site] = { success: true }
-      console.log(`✅ [${site}] Webhooks 注册成功`)
+      console.log(`✅ [${site}] Webhooks 注册成功 (商品 + 订单)`)
     } catch (err) {
       results[site] = {
         success: false,
@@ -1220,6 +1414,372 @@ async function registerWebhooks(
   }
 
   return results
+}
+
+// ==================== 删除商品 ====================
+
+interface DeleteResult {
+  site: SiteKey
+  success: boolean
+  error?: string
+}
+
+async function deleteProduct(
+  supabase: any,
+  sku: string,
+  sites: SiteKey[],
+  deleteLocal: boolean = true
+): Promise<{ results: DeleteResult[]; localDeleted: boolean }> {
+  console.log(`🗑️ 删除商品 ${sku} 从 ${sites.length} 个站点...`)
+  const startTime = Date.now()
+
+  // 获取商品数据（需要 woo_ids）
+  const { data: product, error: fetchError } = await supabase
+    .from('products')
+    .select('woo_ids')
+    .eq('sku', sku)
+    .single()
+
+  if (fetchError || !product) {
+    console.error('获取商品数据失败:', fetchError)
+    return {
+      results: sites.map(site => ({ site, success: false, error: '商品不存在' })),
+      localDeleted: false,
+    }
+  }
+
+  // 并行删除所有站点
+  const results = await Promise.all(
+    sites.map(async (site): Promise<DeleteResult> => {
+      const siteStartTime = Date.now()
+      const wooId = product.woo_ids?.[site]
+
+      if (!wooId) {
+        console.log(`[${site}] 跳过 - 该站点未发布此商品`)
+        return { site, success: true, error: undefined }  // 未发布视为成功
+      }
+
+      try {
+        const client = new WooCommerceClient(site)
+        await client.deleteProduct(wooId)
+
+        const duration = ((Date.now() - siteStartTime) / 1000).toFixed(1)
+        console.log(`✅ [${site}] 删除成功 (${duration}s) - ID: ${wooId}`)
+
+        return { site, success: true }
+      } catch (err) {
+        const duration = ((Date.now() - siteStartTime) / 1000).toFixed(1)
+        const errorMsg = err instanceof Error ? err.message : '删除失败'
+        console.error(`❌ [${site}] 删除失败 (${duration}s): ${errorMsg}`)
+
+        return { site, success: false, error: errorMsg }
+      }
+    })
+  )
+
+  // 删除本地数据库记录
+  let localDeleted = false
+  if (deleteLocal) {
+    const { error: deleteError } = await supabase
+      .from('products')
+      .delete()
+      .eq('sku', sku)
+
+    if (deleteError) {
+      console.error('删除本地记录失败:', deleteError)
+    } else {
+      localDeleted = true
+      console.log(`💾 本地记录已删除: ${sku}`)
+    }
+  }
+
+  const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1)
+  const successCount = results.filter(r => r.success).length
+  console.log(`🏁 删除完成: ${successCount}/${sites.length} 成功 (${totalDuration}s)`)
+
+  return { results, localDeleted }
+}
+
+// ==================== 从站点拉取商品数据到 PIM ====================
+
+interface PullResult {
+  sku: string
+  success: boolean
+  error?: string
+}
+
+async function pullProducts(
+  supabase: any,
+  skus: string[],
+  site: SiteKey
+): Promise<{ results: PullResult[] }> {
+  console.log(`📥 从 ${site} 站点拉取 ${skus.length} 个商品数据到 PIM...`)
+  const startTime = Date.now()
+
+  const client = new WooCommerceClient(site)
+  const results: PullResult[] = []
+
+  // 先获取本地商品的 woo_ids
+  const { data: localProducts, error: fetchError } = await supabase
+    .from('products')
+    .select('sku, woo_ids')
+    .in('sku', skus)
+
+  if (fetchError) {
+    console.error('获取本地商品数据失败:', fetchError)
+    return {
+      results: skus.map(sku => ({ sku, success: false, error: '获取本地数据失败' })),
+    }
+  }
+
+  const skuToWooId = new Map<string, number>()
+  for (const p of localProducts || []) {
+    const wooId = p.woo_ids?.[site]
+    if (wooId) {
+      skuToWooId.set(p.sku, wooId)
+    }
+  }
+
+  // 逐个拉取并更新
+  for (const sku of skus) {
+    const wooId = skuToWooId.get(sku)
+    if (!wooId) {
+      results.push({ sku, success: false, error: `该商品未在 ${site} 站点发布` })
+      continue
+    }
+
+    try {
+      // 从 WooCommerce 获取完整商品数据
+      const wooProduct = await client.getProduct(wooId)
+
+      // 提取数据更新到 PIM
+      const updateData: any = {
+        // 更新该站点的价格
+        [`prices`]: { [site]: parseFloat(wooProduct.sale_price) || parseFloat(wooProduct.price) || 0 },
+        [`regular_prices`]: { [site]: parseFloat(wooProduct.regular_price) || parseFloat(wooProduct.price) || 0 },
+        // 更新该站点的库存
+        [`stock_quantities`]: { [site]: wooProduct.stock_quantity ?? 100 },
+        [`stock_statuses`]: { [site]: wooProduct.stock_status || 'instock' },
+        // 更新该站点的状态
+        [`statuses`]: { [site]: wooProduct.status || 'publish' },
+        // 更新该站点的内容
+        [`content`]: {
+          [site]: {
+            name: wooProduct.name,
+            description: wooProduct.description || '',
+            short_description: wooProduct.short_description || '',
+          }
+        },
+        // 更新同步状态
+        [`sync_status`]: { [site]: 'synced' },
+        last_synced_at: new Date().toISOString(),
+      }
+
+      // 如果是主站点 (com)，还要更新共享数据
+      if (site === 'com') {
+        updateData.name = wooProduct.name
+        updateData.images = (wooProduct.images || []).map((img: any) => img.src)
+        updateData.categories = (wooProduct.categories || []).map((c: any) => c.name)
+
+        // 提取属性
+        const attributes: Record<string, any> = {}
+        for (const attr of wooProduct.attributes || []) {
+          const attrName = (attr.name || '').toLowerCase().replace(/[^a-z]/g, '')
+          const value = attr.options?.[0] || ''
+
+          if (attrName === 'genderage' || attrName === 'gender') attributes.gender = value
+          else if (attrName === 'season') attributes.season = value
+          else if (attrName === 'jerseytype' || attrName === 'type') attributes.type = value
+          else if (attrName === 'style' || attrName === 'version') attributes.version = value
+          else if (attrName === 'sleevelength' || attrName === 'sleeve') attributes.sleeve = value
+          else if (attrName === 'team') attributes.team = value
+          else if (attrName === 'event' || attrName === 'events') attributes.events = attr.options || []
+        }
+        if (Object.keys(attributes).length > 0) {
+          updateData.attributes = attributes
+        }
+      }
+
+      // 获取现有数据并合并（保留其他站点的数据）
+      const { data: existingProduct } = await supabase
+        .from('products')
+        .select('prices, regular_prices, stock_quantities, stock_statuses, statuses, content, sync_status')
+        .eq('sku', sku)
+        .single()
+
+      if (existingProduct) {
+        // 合并 JSONB 字段
+        updateData.prices = { ...existingProduct.prices, ...updateData.prices }
+        updateData.regular_prices = { ...existingProduct.regular_prices, ...updateData.regular_prices }
+        updateData.stock_quantities = { ...existingProduct.stock_quantities, ...updateData.stock_quantities }
+        updateData.stock_statuses = { ...existingProduct.stock_statuses, ...updateData.stock_statuses }
+        updateData.statuses = { ...existingProduct.statuses, ...updateData.statuses }
+        updateData.content = { ...existingProduct.content, ...updateData.content }
+        updateData.sync_status = { ...existingProduct.sync_status, ...updateData.sync_status }
+      }
+
+      // 更新数据库
+      const { error: updateError } = await supabase
+        .from('products')
+        .update(updateData)
+        .eq('sku', sku)
+
+      if (updateError) {
+        throw new Error(updateError.message)
+      }
+
+      results.push({ sku, success: true })
+      console.log(`✅ [${sku}] 拉取成功`)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '拉取失败'
+      results.push({ sku, success: false, error: errorMsg })
+      console.error(`❌ [${sku}] 拉取失败: ${errorMsg}`)
+    }
+  }
+
+  const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1)
+  const successCount = results.filter(r => r.success).length
+  console.log(`🏁 拉取完成: ${successCount}/${skus.length} 成功 (${totalDuration}s)`)
+
+  return { results }
+}
+
+// ==================== 订单同步 ====================
+
+interface OrderSyncResult {
+  site: SiteKey
+  success: boolean
+  synced: number
+  errors: number
+  error?: string
+}
+
+// 转换 WooCommerce 订单数据为数据库格式
+function transformWooOrder(wooOrder: any, site: SiteKey): any {
+  return {
+    order_number: wooOrder.number || wooOrder.id.toString(),
+    site,
+    woo_id: wooOrder.id,
+    status: wooOrder.status,
+    currency: wooOrder.currency || 'USD',
+    total: parseFloat(wooOrder.total) || 0,
+    subtotal: parseFloat(wooOrder.subtotal) || 0,
+    shipping_total: parseFloat(wooOrder.shipping_total) || 0,
+    discount_total: parseFloat(wooOrder.discount_total) || 0,
+    customer_email: wooOrder.billing?.email || null,
+    customer_name: [wooOrder.billing?.first_name, wooOrder.billing?.last_name].filter(Boolean).join(' ') || null,
+    billing_address: wooOrder.billing || {},
+    shipping_address: wooOrder.shipping || {},
+    line_items: (wooOrder.line_items || []).map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      product_id: item.product_id,
+      variation_id: item.variation_id,
+      quantity: item.quantity,
+      price: parseFloat(item.price) || 0,
+      sku: item.sku || '',
+      image: item.image || null,  // 商品图片
+      meta_data: item.meta_data || [],
+    })),
+    shipping_lines: (wooOrder.shipping_lines || []).map((line: any) => ({
+      method_title: line.method_title,
+      total: parseFloat(line.total) || 0,
+    })),
+    payment_method: wooOrder.payment_method || null,
+    payment_method_title: wooOrder.payment_method_title || null,
+    date_created: wooOrder.date_created ? new Date(wooOrder.date_created).toISOString() : new Date().toISOString(),
+    date_paid: wooOrder.date_paid ? new Date(wooOrder.date_paid).toISOString() : null,
+    date_completed: wooOrder.date_completed ? new Date(wooOrder.date_completed).toISOString() : null,
+    last_synced_at: new Date().toISOString(),
+  }
+}
+
+// 同步单个站点的订单
+async function syncSiteOrders(
+  supabase: any,
+  site: SiteKey,
+  options: { status?: string; after?: string; per_page?: number } = {}
+): Promise<OrderSyncResult> {
+  console.log(`📦 [${site}] 开始同步订单...`)
+  const startTime = Date.now()
+
+  try {
+    const client = new WooCommerceClient(site)
+    const orders = await client.getAllOrders({
+      status: options.status,
+      after: options.after,
+      per_page: options.per_page,
+    })
+
+    console.log(`[${site}] 获取到 ${orders.length} 个订单`)
+
+    if (orders.length === 0) {
+      return { site, success: true, synced: 0, errors: 0 }
+    }
+
+    // 转换订单数据
+    const ordersData = orders.map(order => transformWooOrder(order, site))
+
+    // 批量 upsert（使用 site + woo_id 作为唯一键）
+    let synced = 0
+    let errors = 0
+    const BATCH_SIZE = 50
+
+    for (let i = 0; i < ordersData.length; i += BATCH_SIZE) {
+      const batch = ordersData.slice(i, i + BATCH_SIZE)
+      const { error } = await supabase
+        .from('orders')
+        .upsert(batch, {
+          onConflict: 'site,woo_id',
+          ignoreDuplicates: false
+        })
+
+      if (error) {
+        console.error(`[${site}] 批次 ${Math.floor(i / BATCH_SIZE) + 1} 插入失败:`, error)
+        errors += batch.length
+      } else {
+        synced += batch.length
+      }
+    }
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1)
+    console.log(`✅ [${site}] 订单同步完成: ${synced}/${orders.length} 成功 (${duration}s)`)
+
+    return { site, success: true, synced, errors }
+  } catch (err) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1)
+    const errorMsg = err instanceof Error ? err.message : '同步失败'
+    console.error(`❌ [${site}] 订单同步失败 (${duration}s):`, errorMsg)
+    return { site, success: false, synced: 0, errors: 0, error: errorMsg }
+  }
+}
+
+// 同步所有站点的订单
+async function syncOrders(
+  supabase: any,
+  options: { site?: SiteKey; status?: string; after?: string; per_page?: number } = {}
+): Promise<{ results: OrderSyncResult[] }> {
+  const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr']
+  const sites = options.site ? [options.site] : ALL_SITES
+
+  console.log(`🚀 开始同步 ${sites.length} 个站点的订单...`)
+  const startTime = Date.now()
+
+  // 并行同步所有站点
+  const results = await Promise.all(
+    sites.map(site => syncSiteOrders(supabase, site, {
+      status: options.status,
+      after: options.after,
+      per_page: options.per_page,
+    }))
+  )
+
+  const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1)
+  const totalSynced = results.reduce((sum, r) => sum + r.synced, 0)
+  const totalErrors = results.reduce((sum, r) => sum + r.errors, 0)
+  console.log(`🏁 订单同步完成: ${totalSynced} 条成功, ${totalErrors} 条失败 (${totalDuration}s)`)
+
+  return { results }
 }
 
 // ==================== 主入口 ====================
@@ -1239,6 +1799,25 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey)
 
     switch (body.action) {
+      case 'get-product': {
+        // 从 WooCommerce 获取单个商品完整数据
+        try {
+          const client = new WooCommerceClient(body.site)
+          const product = await client.getProduct(body.productId)
+          return new Response(JSON.stringify({ success: true, product }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error(`[${body.site}] 获取商品失败:`, err)
+          return new Response(JSON.stringify({ 
+            success: false, 
+            error: err instanceof Error ? err.message : 'Unknown error' 
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
       case 'publish-product': {
         const result = await publishProduct(supabase, body.sites, body.product)
         return new Response(JSON.stringify({ success: true, ...result }), {
@@ -1279,6 +1858,104 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ success: true, results }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
+      }
+
+      case 'delete-product': {
+        const result = await deleteProduct(supabase, body.sku, body.sites, body.deleteLocal ?? true)
+        return new Response(JSON.stringify({ success: true, ...result }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      case 'pull-products': {
+        const result = await pullProducts(supabase, body.skus, body.site)
+        return new Response(JSON.stringify({ success: true, ...result }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      // ==================== 订单操作 ====================
+
+      case 'sync-orders': {
+        const result = await syncOrders(supabase, {
+          site: body.site,
+          status: body.status,
+          after: body.after,
+          per_page: body.per_page,
+        })
+        return new Response(JSON.stringify({ success: true, ...result }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      case 'get-order': {
+        try {
+          const client = new WooCommerceClient(body.site)
+          const order = await client.getOrder(body.woo_id)
+          return new Response(JSON.stringify({ success: true, order }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error(`[${body.site}] 获取订单失败:`, err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'update-order-status': {
+        try {
+          const client = new WooCommerceClient(body.site)
+          const order = await client.updateOrderStatus(body.woo_id, body.status)
+
+          // 同时更新本地数据库
+          const { error: updateError } = await supabase
+            .from('orders')
+            .update({
+              status: body.status,
+              updated_at: new Date().toISOString(),
+              last_synced_at: new Date().toISOString(),
+            })
+            .eq('site', body.site)
+            .eq('woo_id', body.woo_id)
+
+          if (updateError) {
+            console.warn('更新本地订单状态失败:', updateError)
+          }
+
+          return new Response(JSON.stringify({ success: true, order }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error(`[${body.site}] 更新订单状态失败:`, err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'add-order-note': {
+        try {
+          const client = new WooCommerceClient(body.site)
+          const note = await client.addOrderNote(body.woo_id, body.note, body.customer_note ?? false)
+          return new Response(JSON.stringify({ success: true, note }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error(`[${body.site}] 添加订单备注失败:`, err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
       }
 
       default:

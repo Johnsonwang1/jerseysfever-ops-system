@@ -1,18 +1,25 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import { Package, Users, LogOut, ChevronDown } from 'lucide-react';
-// Package is still used in navItems
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Package, Users, LogOut, ChevronDown, Menu, X, ShoppingCart } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
 
 const navItems = [
   { to: '/products', label: '商品管理', icon: Package },
+  { to: '/orders', label: '订单管理', icon: ShoppingCart },
   { to: '/users', label: '用户管理', icon: Users, adminOnly: true },
 ];
 
 export function Layout() {
   const { profile, signOut, isAdmin } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+
+  // 路由变化时关闭移动端侧边栏
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -33,16 +40,37 @@ export function Layout() {
   const visibleNavItems = navItems.filter(item => !item.adminOnly || isAdmin);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* 侧边栏 */}
-      <aside className="w-56 bg-white border-r border-gray-200 flex flex-col">
+    <div className="h-screen bg-gray-50 flex overflow-hidden">
+      {/* 移动端遮罩 */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* 侧边栏 - 桌面端固定，移动端从左滑出 */}
+      <aside className={`
+        fixed lg:relative inset-y-0 left-0 z-50
+        w-56 bg-white border-r border-gray-200
+        flex flex-col h-full
+        transform transition-transform duration-200 ease-in-out
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
         {/* Logo */}
-        <div className="h-16 flex items-center px-3 border-b border-gray-100">
+        <div className="h-16 flex items-center justify-between px-3 border-b border-gray-100 flex-shrink-0">
           <img src="/logo.png" alt="Jerseysfever" className="h-11" />
+          {/* 移动端关闭按钮 */}
+          <button
+            className="lg:hidden p-2 text-gray-400 hover:text-gray-600 rounded-lg"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* 导航 */}
-        <nav className="flex-1 py-4">
+        {/* 导航 - 可滚动 */}
+        <nav className="flex-1 py-4 overflow-y-auto min-h-0">
           {visibleNavItems.map((item) => (
             <NavLink
               key={item.to}
@@ -61,8 +89,8 @@ export function Layout() {
           ))}
         </nav>
 
-        {/* 用户信息 */}
-        <div className="p-3 border-t border-gray-100" ref={menuRef}>
+        {/* 用户信息 - 固定底部 */}
+        <div className="p-3 border-t border-gray-100 flex-shrink-0" ref={menuRef}>
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
@@ -86,7 +114,7 @@ export function Layout() {
 
             {/* 下拉菜单 */}
             {showUserMenu && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-50">
                 <div className="px-3 py-2 border-b border-gray-100">
                   <p className="text-xs text-gray-500 truncate">{profile?.email}</p>
                 </div>
@@ -102,16 +130,30 @@ export function Layout() {
           </div>
         </div>
 
-        {/* 底部版本 */}
-        <div className="px-4 pb-3">
+        {/* 底部版本 - 固定底部 */}
+        <div className="px-4 pb-3 flex-shrink-0">
           <p className="text-xs text-gray-400 text-center">v1.0.0</p>
         </div>
       </aside>
 
       {/* 主内容区 */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
+      <div className="flex-1 flex flex-col min-w-0 h-full">
+        {/* 移动端顶部导航栏 */}
+        <header className="lg:hidden h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-3 flex-shrink-0">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg -ml-2"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <img src="/logo.png" alt="Jerseysfever" className="h-8" />
+        </header>
+
+        {/* 主内容 */}
+        <main className="flex-1 overflow-auto min-h-0">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

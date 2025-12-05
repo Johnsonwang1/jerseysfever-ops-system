@@ -184,15 +184,17 @@ export function ProductForm({ info, onChange }: ProductFormProps) {
           />
         </div>
 
-        {/* 赛事（多选） */}
+        {/* 赛事（单选） */}
         <div className="col-span-2 md:col-span-4">
           <label className="block text-xs font-medium text-gray-500 mb-1">赛事</label>
           <div className="flex flex-wrap gap-2">
             {ATTRIBUTE_OPTIONS.event.map((event) => (
-              <label
+              <button
                 key={event}
+                type="button"
+                onClick={() => handleChange('events', [event])}
                 className={`
-                  flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs cursor-pointer transition-colors
+                  px-2.5 py-1 rounded-full text-xs cursor-pointer transition-colors
                   ${
                     info.events.includes(event)
                       ? 'bg-black text-white'
@@ -200,23 +202,8 @@ export function ProductForm({ info, onChange }: ProductFormProps) {
                   }
                 `}
               >
-                <input
-                  type="checkbox"
-                  checked={info.events.includes(event)}
-                  onChange={(ev) => {
-                    if (ev.target.checked) {
-                      handleChange('events', [...info.events, event]);
-                    } else {
-                      handleChange(
-                        'events',
-                        info.events.filter((item) => item !== event)
-                      );
-                    }
-                  }}
-                  className="sr-only"
-                />
                 {event}
-              </label>
+              </button>
             ))}
           </div>
         </div>
