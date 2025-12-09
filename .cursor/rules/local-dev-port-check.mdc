@@ -1,0 +1,59 @@
+---
+description: 在启动本地开发应用之前，**必须**检查目标端口是否已被占用。如果端口被占用，应使用另一个可用端口重新启动应用。
+alwaysApply: false
+---
+# 本地开发端口检查规则
+
+## 📋 核心规则
+
+在启动本地开发应用之前，**必须**检查目标端口是否已被占用。如果端口被占用，使用另一个可用端口重新启动。
+
+---
+
+## ✅ 检查端口
+
+```bash
+# 检查端口是否被占用
+lsof -i :5173
+
+# 如果被占用，查找可用端口并启动
+PORT=5174 npm run dev  # 手动指定其他端口
+```
+
+---
+
+## 🔍 自动查找可用端口
+
+```bash
+# 检查默认端口，如果被占用则自动查找下一个可用端口
+DEFAULT_PORT=5173
+PORT=$DEFAULT_PORT
+
+if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+  echo "⚠️  Port $PORT is in use, finding available port..."
+  while lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null 2>&1; do
+    PORT=$((PORT+1))
+  done
+  echo "✅ Using port $PORT"
+fi
+
+export PORT=$PORT
+npm run dev
+```
+
+---
+
+## 📝 常用端口
+
+- React/Vite: `5173` 或 `3000`
+- Next.js: `3000`
+- Flask: `5000`
+- FastAPI: `8000`
+
+---
+
+## ⚠️ 重要
+
+- **启动前必须检查端口**
+- **端口被占用时使用其他端口**
+- **不要终止系统进程**

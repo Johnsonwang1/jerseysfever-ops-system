@@ -5,19 +5,23 @@
  * 支持的 actions:
  * - get-product: 从 WooCommerce 获取单个商品完整数据
  * - publish-product: 创建新商品到指定站点
- * - sync-product: 同步单个商品到指定站点
+ * - sync-product: 同步单个商品到指定站点（PIM → WooCommerce）
  * - sync-products-batch: 批量同步多个商品
- * - sync-all: 全量同步所有站点
+ * - pull-products: 从站点拉取商品数据（WooCommerce → PIM）
+ * - delete-product: 删除商品
  * - cleanup-images: 清理商品图片
  * - register-webhooks: 注册 Webhook 到所有站点
+ * - get-variations: 获取商品变体
  *
  * 订单相关:
  * - sync-orders: 全量同步订单
  * - update-order-status: 更新订单状态
  * - add-order-note: 添加订单备注
+ * - get-order: 获取单个订单
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { crypto } from 'https://deno.land/std@0.177.0/crypto/mod.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,10 +54,6 @@ interface SyncProductsBatchRequest {
     fields?: SyncField[]
     syncImages?: boolean
   }
-}
-
-interface SyncAllRequest {
-  action: 'sync-all'
 }
 
 interface CleanupImagesRequest {
@@ -152,7 +152,29 @@ interface GetOrderRequest {
   woo_id: number
 }
 
-type RequestBody = SyncProductRequest | SyncProductsBatchRequest | SyncAllRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest
+// 获取商品变体请求
+interface GetVariationsRequest {
+  action: 'get-variations'
+  site: SiteKey
+  productId: number
+}
+
+// 批量同步变体请求（只同步变体，不更新其他字段）
+interface SyncVariationsRequest {
+  action: 'sync-variations'
+  site: SiteKey
+  limit?: number   // 每批数量，默认 50
+  offset?: number  // 偏移量
+}
+
+// 重建变体请求（删除旧变体，创建新变体）
+interface RebuildVariationsRequest {
+  action: 'rebuild-variations'
+  sku: string
+  sites: SiteKey[]
+}
+
+type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest
 
 interface SyncResult {
   site: SiteKey
@@ -297,6 +319,38 @@ class WooCommerceClient {
     }
   }
 
+  // 获取完整的变体信息（包含 SKU 和属性）
+  async getProductVariationsFull(productId: number): Promise<{
+    id: number
+    sku: string
+    regular_price: string
+    sale_price: string
+    stock_quantity: number | null
+    stock_status: string
+    attributes: { name: string; option: string }[]
+  }[]> {
+    try {
+      const variations = await this.request<any[]>(`/products/${productId}/variations?per_page=100`)
+      return variations.map(v => ({
+        id: v.id,
+        sku: v.sku || '',
+        regular_price: v.regular_price || '',
+        sale_price: v.sale_price || '',
+        stock_quantity: v.stock_quantity,
+        stock_status: v.stock_status || 'instock',
+        attributes: (v.attributes || []).map((attr: any) => ({
+          name: attr.name || '',
+          option: attr.option || '',
+        })),
+      }))
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('404')) {
+        return []
+      }
+      throw error
+    }
+  }
+
   async batchUpdateVariations(productId: number, updates: any[]): Promise<void> {
     await this.request(`/products/${productId}/variations/batch`, {
       method: 'POST',
@@ -310,6 +364,14 @@ class WooCommerceClient {
       body: JSON.stringify({ create: variations }),
     })
     return result.create || []
+  }
+
+  async batchDeleteVariations(productId: number, variationIds: number[]): Promise<void> {
+    if (variationIds.length === 0) return
+    await this.request(`/products/${productId}/variations/batch`, {
+      method: 'POST',
+      body: JSON.stringify({ delete: variationIds }),
+    })
   }
 
   async convertToVariableProduct(productId: number, sizes: string[]): Promise<void> {
@@ -620,6 +682,243 @@ class WooCommerceClient {
   }
 }
 
+// ==================== 图片转存到 Supabase Storage ====================
+
+/**
+ * 生成 MD5 哈希（用于图片去重）
+ */
+async function md5Hash(input: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(input)
+  const hashBuffer = await crypto.subtle.digest('MD5', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * 生成唯一的 Storage 文件名（基于原 URL 哈希）
+ */
+async function getStorageFilename(url: string, sku: string): Promise<string> {
+  const hash = (await md5Hash(url)).slice(0, 12)
+  // 提取文件扩展名
+  const urlPath = url.split('?')[0]
+  const ext = urlPath.split('.').pop()?.toLowerCase() || 'jpg'
+  const validExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext) ? ext : 'jpg'
+  // 清理 SKU（移除特殊字符）
+  const cleanSku = sku.replace(/[^a-zA-Z0-9-]/g, '_')
+  return `products/${cleanSku}/${hash}.${validExt}`
+}
+
+/**
+ * 检查图片是否已存在于 Storage
+ */
+async function checkImageExists(supabase: any, filename: string): Promise<boolean> {
+  const parts = filename.split('/')
+  const dir = parts.slice(0, -1).join('/')
+  const name = parts[parts.length - 1]
+  
+  const { data } = await supabase.storage
+    .from('product-images')
+    .list(dir)
+  
+  return data?.some((f: any) => f.name === name) ?? false
+}
+
+/**
+ * 转存单张图片到 Supabase Storage（自动去重）
+ */
+async function transferImageToStorage(
+  supabase: any,
+  imageUrl: string,
+  sku: string
+): Promise<string> {
+  const filename = await getStorageFilename(imageUrl, sku)
+  
+  // 检查是否已存在（哈希去重）
+  const exists = await checkImageExists(supabase, filename)
+  if (exists) {
+    console.log(`[Storage] 图片已存在，复用: ${filename}`)
+    const { data } = supabase.storage.from('product-images').getPublicUrl(filename)
+    return data.publicUrl
+  }
+  
+  // 下载图片
+  console.log(`[Storage] 下载图片: ${imageUrl}`)
+  const response = await fetch(imageUrl)
+  if (!response.ok) {
+    throw new Error(`下载图片失败: ${response.status}`)
+  }
+  
+  const imageData = await response.arrayBuffer()
+  const contentType = response.headers.get('content-type') || 'image/jpeg'
+  
+  // 上传到 Storage
+  const { error } = await supabase.storage
+    .from('product-images')
+    .upload(filename, imageData, {
+      contentType,
+      upsert: false,
+    })
+  
+  if (error) {
+    // 如果是重复文件错误，可能是并发上传，直接返回 URL
+    if (error.message?.includes('already exists') || error.message?.includes('Duplicate')) {
+      console.log(`[Storage] 图片已存在（并发），复用: ${filename}`)
+      const { data } = supabase.storage.from('product-images').getPublicUrl(filename)
+      return data.publicUrl
+    }
+    throw new Error(`上传图片失败: ${error.message}`)
+  }
+  
+  console.log(`[Storage] 上传成功: ${filename}`)
+  const { data } = supabase.storage.from('product-images').getPublicUrl(filename)
+  return data.publicUrl
+}
+
+/**
+ * 准备发布用的图片（自动转存 .com 图片到 Storage）
+ * 返回所有图片的 Storage URL 和新转存的 URL 列表
+ */
+async function prepareImagesForPublish(
+  supabase: any,
+  images: string[],
+  sku: string
+): Promise<{ storageUrls: string[]; migrated: number; skipped: number; migratedUrls: string[] }> {
+  const storageUrls: string[] = []
+  const migratedUrls: string[] = []  // 记录新转存的图片 URL
+  let migrated = 0
+  let skipped = 0
+  
+  for (const url of images) {
+    try {
+      // 已经是 Supabase Storage URL，直接使用
+      if (url.includes('supabase.co') || url.includes('supabase.in')) {
+        storageUrls.push(url)
+        skipped++
+        continue
+      }
+      
+      // 转存到 Storage
+      const storageUrl = await transferImageToStorage(supabase, url, sku)
+      storageUrls.push(storageUrl)
+      migratedUrls.push(storageUrl)  // 记录新转存的 URL
+      migrated++
+    } catch (err) {
+      console.error(`[Storage] 转存失败: ${url}`, err)
+      // 转存失败时保留原 URL（降级处理）
+      storageUrls.push(url)
+    }
+  }
+  
+  console.log(`[Storage] 图片处理完成: ${migrated} 张迁移, ${skipped} 张跳过`)
+  return { storageUrls, migrated, skipped, migratedUrls }
+}
+
+/**
+ * 从 Storage URL 提取文件路径
+ */
+function extractStoragePath(url: string): string | null {
+  try {
+    const urlObj = new URL(url)
+    // Supabase Storage URL 格式: https://xxx.supabase.co/storage/v1/object/public/product-images/path/to/file.jpg
+    const match = urlObj.pathname.match(/\/storage\/v1\/object\/public\/product-images\/(.+)$/)
+    if (match) {
+      return decodeURIComponent(match[1])
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 删除 Storage 中的临时图片
+ * 只删除本次发布时转存的图片（通过 URL 判断）
+ */
+async function cleanupTemporaryImages(
+  supabase: any,
+  storageUrls: string[]
+): Promise<{ deleted: number; failed: number }> {
+  let deleted = 0
+  let failed = 0
+  
+  const pathsToDelete: string[] = []
+  
+  for (const url of storageUrls) {
+    // 只处理 Supabase Storage URL
+    if (!url.includes('supabase.co') && !url.includes('supabase.in')) {
+      continue
+    }
+    
+    const path = extractStoragePath(url)
+    if (path) {
+      pathsToDelete.push(path)
+    }
+  }
+  
+  if (pathsToDelete.length === 0) {
+    return { deleted: 0, failed: 0 }
+  }
+  
+  console.log(`🗑️ 删除 ${pathsToDelete.length} 张临时图片...`)
+  
+  // 批量删除
+  const { data, error } = await supabase.storage
+    .from('product-images')
+    .remove(pathsToDelete)
+  
+  if (error) {
+    console.error('删除临时图片失败:', error)
+    failed = pathsToDelete.length
+  } else {
+    deleted = pathsToDelete.length
+    console.log(`✅ 已删除 ${deleted} 张临时图片`)
+  }
+  
+  return { deleted, failed }
+}
+
+// ==================== 图片验证 ====================
+
+/**
+ * 验证图片 URL 是否有效
+ * 检查 Content-Type 是否为图片类型，以及扩展名是否匹配
+ */
+async function validateImageUrl(url: string): Promise<{
+  valid: boolean
+  error?: string
+  contentType?: string
+}> {
+  try {
+    // 发送 HEAD 请求检查 Content-Type
+    const response = await fetch(url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(10000), // 10秒超时
+    })
+    
+    if (!response.ok) {
+      return { valid: false, error: `HTTP ${response.status}` }
+    }
+    
+    const contentType = response.headers.get('content-type')?.toLowerCase() || ''
+    
+    // 检查是否为图片类型
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+    const isValidType = validTypes.some(t => contentType.includes(t))
+    
+    if (!isValidType) {
+      return { valid: false, error: `不支持的类型: ${contentType}`, contentType }
+    }
+    
+    // 只要 Content-Type 是有效的图片类型就通过
+    // 不再严格检查扩展名匹配（因为有些图片上传时保留了原始扩展名但实际是 webp）
+    // WooCommerce 会自己处理图片格式转换
+    return { valid: true, contentType }
+  } catch (err) {
+    return { valid: false, error: err instanceof Error ? err.message : '验证失败' }
+  }
+}
+
 // ==================== 图片清理 ====================
 
 async function cleanupProductImages(site: SiteKey, productId: number): Promise<{
@@ -773,16 +1072,72 @@ async function syncSingleSite(
 
   // 图片同步
   if (shouldSync('images', options) && product.images?.length > 0) {
-    console.log(`[${site}] 开始同步图片（共 ${product.images.length} 张）...`)
+    console.log(`[${site}] 开始处理图片（共 ${product.images.length} 张）...`)
     
-    const cleanupResult = await cleanupProductImages(site, wooId)
-    if (!cleanupResult.success) {
-      console.warn(`[${site}] 图片清理失败: ${cleanupResult.error}`)
-    } else {
-      console.log(`[${site}] 图片清理成功`)
+    // 🔧 先转存 .com 图片到 Supabase Storage（避免验证超时导致图片丢失）
+    const imageResult = await prepareImagesForPublish(supabase, product.images, product.sku)
+    const storageImages = imageResult.storageUrls
+    
+    if (imageResult.migrated > 0) {
+      console.log(`[${site}] 🖼️ ${imageResult.migrated} 张图片已转存到 Storage`)
+      
+      // 更新本地数据库的 images 字段（使用 Storage URL）
+      const { error: dbError } = await supabase
+        .from('products')
+        .update({ images: storageImages })
+        .eq('sku', product.sku)
+      
+      if (dbError) {
+        console.warn(`[${site}] 更新本地图片 URL 失败: ${dbError.message}`)
+      } else {
+        console.log(`[${site}] ✅ 本地图片 URL 已更新为 Storage URL`)
+      }
     }
     
-    updateData.images = product.images.map((src: string) => ({ src }))
+    // 验证转存后的图片 URL
+    const validImages: string[] = []
+    const invalidImages: { url: string; error: string }[] = []
+    
+    // 并行验证所有图片（加快速度）
+    const validationResults = await Promise.all(
+      storageImages.map(async (src: string) => {
+        if (!src || typeof src !== 'string') {
+          return { url: src || '(empty)', valid: false, error: '无效 URL' }
+        }
+        const result = await validateImageUrl(src)
+        return { url: src, ...result }
+      })
+    )
+    
+    for (const result of validationResults) {
+      if (result.valid) {
+        validImages.push(result.url)
+      } else {
+        invalidImages.push({ url: result.url, error: result.error || '未知错误' })
+      }
+    }
+    
+    if (invalidImages.length > 0) {
+      console.warn(`[${site}] ⚠️ 跳过 ${invalidImages.length} 张无效图片:`)
+      invalidImages.forEach(img => {
+        console.warn(`  - ${img.error}: ${img.url.substring(0, 80)}...`)
+      })
+    }
+    
+    if (validImages.length === 0) {
+      console.warn(`[${site}] 没有有效图片可同步`)
+    } else {
+      console.log(`[${site}] ✅ ${validImages.length} 张图片验证通过，开始同步...`)
+      
+      const cleanupResult = await cleanupProductImages(site, wooId)
+      if (!cleanupResult.success) {
+        console.warn(`[${site}] 图片清理失败: ${cleanupResult.error}`)
+      } else {
+        console.log(`[${site}] 图片清理成功`)
+      }
+      
+      updateData.images = validImages.map((src: string) => ({ src }))
+    }
   }
 
   // 分类同步（优先使用缓存）
@@ -926,7 +1281,9 @@ async function syncProduct(
     return sites.map(site => ({ site, success: false, error: '商品不存在' }))
   }
 
-  console.log(`🚀 开始并行同步 ${sku} 到 ${sites.length} 个站点${options?.syncImages ? '（含图片）' : ''}`)
+  console.log(`🚀 开始并行同步 ${sku} 到 ${sites.length} 个站点`)
+  console.log(`📋 同步选项:`, JSON.stringify(options))
+  console.log(`🖼️ syncImages = ${options?.syncImages}, 图片数量 = ${product.images?.length || 0}`)
   const startTime = Date.now()
 
   // 如果需要同步分类，预加载分类缓存（从数据库，超快）
@@ -957,7 +1314,64 @@ async function syncProduct(
 
   const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1)
   const successCount = results.filter(r => r.success).length
+  const failedResults = results.filter(r => !r.success)
   console.log(`🏁 同步完成: ${successCount}/${sites.length} 成功 (${totalDuration}s)`)
+
+  // 更新失败站点的 sync_status 为 error
+  if (failedResults.length > 0) {
+    const syncStatusUpdates: Record<string, string> = {}
+    for (const result of failedResults) {
+      syncStatusUpdates[result.site] = 'error'
+    }
+    
+    try {
+      await supabase
+        .from('products')
+        .update({
+          sync_status: { ...product.sync_status, ...syncStatusUpdates },
+        })
+        .eq('sku', sku)
+      console.log(`⚠️ 已标记 ${failedResults.length} 个站点为 error 状态`)
+    } catch (err) {
+      console.warn('更新失败状态时出错:', err)
+    }
+  }
+
+  // 同步完成后，获取各站点变体信息
+  try {
+    const variations: Record<string, any[]> = {}
+    const variation_counts: Record<string, number> = {}
+    
+    for (const site of sites) {
+      const wooId = product.woo_ids?.[site]
+      if (wooId) {
+        try {
+          const client = new WooCommerceClient(site)
+          const siteVariations = await client.getProductVariationsFull(wooId)
+          variations[site] = siteVariations
+          variation_counts[site] = siteVariations.length
+          console.log(`📦 [${site}] 获取 ${siteVariations.length} 个变体`)
+        } catch (err) {
+          console.warn(`[${site}] 获取变体失败:`, err)
+        }
+      }
+    }
+    
+    // 合并现有变体数据并更新
+    const existingVariations = product.variations || {}
+    const existingCounts = product.variation_counts || {}
+    
+    await supabase
+      .from('products')
+      .update({
+        variations: { ...existingVariations, ...variations },
+        variation_counts: { ...existingCounts, ...variation_counts },
+      })
+      .eq('sku', sku)
+      
+  } catch (err) {
+    console.warn('更新变体信息失败:', err)
+  }
 
   return results
 }
@@ -1039,146 +1453,46 @@ async function syncProductsBatch(
   return allResults
 }
 
-// ==================== 全量同步 ====================
+// ==================== 获取并存储变体信息 ====================
 
-async function syncAll(supabase: any): Promise<{
-  success: boolean
-  results: Record<SiteKey, { synced: number; errors: number }>
-}> {
-  const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr']
-  const results: Record<SiteKey, { synced: number; errors: number }> = {
-    com: { synced: 0, errors: 0 },
-    uk: { synced: 0, errors: 0 },
-    de: { synced: 0, errors: 0 },
-    fr: { synced: 0, errors: 0 },
-  }
-
-  console.log('🚀 开始全量同步...')
-
-  // 并行获取所有站点商品
-  const allSiteProducts: Record<SiteKey, any[]> = {} as any
-  
-  await Promise.all(ALL_SITES.map(async (site) => {
-    try {
-      const client = new WooCommerceClient(site)
-      const products = await client.getAllProducts('publish')
-      allSiteProducts[site] = products
-      console.log(`[${site}] 获取 ${products.length} 个商品`)
-    } catch (err) {
-      console.error(`[${site}] 获取商品失败:`, err)
-      allSiteProducts[site] = []
-    }
-  }))
-
-  // 按 SKU 合并数据
-  const skuMap = new Map<string, { site: SiteKey; product: any }[]>()
-  
-  for (const site of ALL_SITES) {
-    for (const product of allSiteProducts[site] || []) {
-      const sku = product.sku || `WOO-${site}-${product.id}`
-      if (!skuMap.has(sku)) {
-        skuMap.set(sku, [])
-      }
-      skuMap.get(sku)!.push({ site, product })
-      results[site].synced++
-    }
-  }
-
-  console.log(`📦 共 ${skuMap.size} 个唯一 SKU`)
-
-  // 批量写入数据库
-  const allUpsertData: any[] = []
-
-  for (const [sku, siteProducts] of skuMap) {
-    const woo_ids: Record<string, number> = {}
-    const prices: Record<string, number> = {}
-    const regular_prices: Record<string, number> = {}
-    const stock_quantities: Record<string, number> = {}
-    const stock_statuses: Record<string, string> = {}
-    const statuses: Record<string, string> = {}
-    const content: Record<string, any> = {}
-    const sync_status: Record<string, string> = {}
-    const date_modified: Record<string, string> = {}
-
-    let mainProduct: any = null
-
-    for (const { site, product } of siteProducts) {
-      woo_ids[site] = product.id
-      prices[site] = parseFloat(product.sale_price) || parseFloat(product.price) || 0
-      regular_prices[site] = parseFloat(product.regular_price) || parseFloat(product.price) || 0
-      stock_quantities[site] = product.stock_quantity ?? 100
-      stock_statuses[site] = product.stock_status || 'instock'
-      statuses[site] = product.status || 'publish'
-      content[site] = {
-        name: product.name,
-        description: product.description || '',
-        short_description: product.short_description || '',
-      }
-      sync_status[site] = 'synced'
-      if (product.date_modified) {
-        date_modified[site] = product.date_modified
-      }
-
-      if (site === 'com' || !mainProduct) {
-        mainProduct = product
-      }
-    }
-
-    const images = (mainProduct?.images || []).map((img: any) => img.src)
-    const categories = (mainProduct?.categories || []).map((c: any) => c.name)
+async function fetchAndStoreVariations(
+  supabase: any,
+  sku: string,
+  site: SiteKey,
+  productId: number
+): Promise<void> {
+  try {
+    const client = new WooCommerceClient(site)
+    const siteVariations = await client.getProductVariationsFull(productId)
     
-    // 提取属性
-    const attributes: Record<string, any> = {}
-    for (const attr of mainProduct?.attributes || []) {
-      const attrName = (attr.name || '').toLowerCase().replace(/[^a-z]/g, '')
-      const value = attr.options?.[0] || ''
-      
-      if (attrName === 'genderage' || attrName === 'gender') attributes.gender = value
-      else if (attrName === 'season') attributes.season = value
-      else if (attrName === 'jerseytype' || attrName === 'type') attributes.type = value
-      else if (attrName === 'style' || attrName === 'version') attributes.version = value
-      else if (attrName === 'sleevelength' || attrName === 'sleeve') attributes.sleeve = value
-      else if (attrName === 'team') attributes.team = value
-      else if (attrName === 'event' || attrName === 'events') attributes.events = attr.options || []
-    }
-
-    allUpsertData.push({
-      sku,
-      name: mainProduct?.name || sku,
-      slug: mainProduct?.slug || '',
-      images,
-      categories,
-      attributes,
-      woo_ids,
-      prices,
-      regular_prices,
-      stock_quantities,
-      stock_statuses,
-      statuses,
-      content,
-      sync_status,
-      date_modified,
-      published_at: mainProduct?.date_created,
-      last_synced_at: new Date().toISOString(),
-    })
-  }
-
-  // 批量 upsert
-  const BATCH_SIZE = 100
-  for (let i = 0; i < allUpsertData.length; i += BATCH_SIZE) {
-    const batch = allUpsertData.slice(i, i + BATCH_SIZE)
+    // 获取现有数据
+    const { data: existing } = await supabase
+      .from('products')
+      .select('variations, variation_counts')
+      .eq('sku', sku)
+      .single()
+    
+    // 合并更新
+    const variations = { ...(existing?.variations || {}), [site]: siteVariations }
+    const variation_counts = { ...(existing?.variation_counts || {}), [site]: siteVariations.length }
+    
+    // 更新数据库
     const { error } = await supabase
       .from('products')
-      .upsert(batch, { onConflict: 'sku' })
+      .update({
+        variations,
+        variation_counts,
+      })
+      .eq('sku', sku)
     
     if (error) {
-      console.error('Upsert error:', error)
+      console.warn(`[${site}] 存储变体信息失败:`, error)
+    } else {
+      console.log(`[${site}] 存储 ${siteVariations.length} 个变体信息`)
     }
+  } catch (err) {
+    console.warn(`[${site}] 获取变体信息失败:`, err)
   }
-
-  console.log(`✅ 全量同步完成: ${allUpsertData.length} 个商品`)
-
-  return { success: true, results }
 }
 
 // ==================== 发布新商品 ====================
@@ -1242,6 +1556,20 @@ async function publishProduct(
   const sku = product.sku || generateSKU(team, product.attributes.season, product.attributes.type)
   console.log(`📦 SKU: ${sku}`)
 
+  // 🖼️ 图片预处理：将 .com 图片转存到 Supabase Storage
+  let finalImages = product.images
+  let migratedImageUrls: string[] = []  // 记录本次转存的图片 URL（用于后续删除）
+  if (product.images && product.images.length > 0) {
+    console.log(`🖼️ 处理 ${product.images.length} 张图片...`)
+    const imageResult = await prepareImagesForPublish(supabase, product.images, sku)
+    finalImages = imageResult.storageUrls
+    migratedImageUrls = imageResult.migratedUrls  // 直接使用返回的新转存 URL 列表
+    
+    if (imageResult.migrated > 0) {
+      console.log(`🖼️ ${imageResult.migrated} 张图片已转存到 Storage`)
+    }
+  }
+
   // 预加载分类缓存
   const categoryCache = await preloadCategoryCacheFromDb(supabase, sites)
 
@@ -1275,14 +1603,14 @@ async function publishProduct(
           short_description: '',
         }
 
-        // 创建商品（所有站点使用相同 SKU）
+        // 创建商品（所有站点使用相同 SKU，使用转存后的 Storage 图片）
         const result = await client.createVariableProduct({
           name: siteContent.name,
           description: siteContent.description,
           short_description: siteContent.short_description,
           sku,  // 统一 SKU，不加站点后缀
           categories: categoryIds,
-          imageUrls: product.images,
+          imageUrls: finalImages,  // 使用转存后的 Storage URL
           attributes: product.attributes,
           price: product.price,
         })
@@ -1345,11 +1673,29 @@ async function publishProduct(
       }
     }
 
+    // 获取各站点变体信息
+    const variations: Record<string, any[]> = {}
+    const variation_counts: Record<string, number> = {}
+    
+    for (const r of results) {
+      if (r.success && r.wooId) {
+        try {
+          const client = new WooCommerceClient(r.site)
+          const siteVariations = await client.getProductVariationsFull(r.wooId)
+          variations[r.site] = siteVariations
+          variation_counts[r.site] = siteVariations.length
+          console.log(`[${r.site}] 获取 ${siteVariations.length} 个变体`)
+        } catch (err) {
+          console.warn(`[${r.site}] 获取变体失败:`, err)
+        }
+      }
+    }
+
     const productData = {
       sku,
       name: product.name,
       slug: null,
-      images: product.images,
+      images: finalImages,  // 使用转存后的 Storage URL
       categories: product.categories,
       attributes: product.attributes,
       woo_ids,
@@ -1360,6 +1706,8 @@ async function publishProduct(
       statuses,
       content,
       sync_status,
+      variations,
+      variation_counts,
       published_at: new Date().toISOString(),
       last_synced_at: new Date().toISOString(),
     }
@@ -1369,6 +1717,18 @@ async function publishProduct(
       console.error('保存到数据库失败:', error)
     } else {
       console.log(`💾 商品已保存到数据库: ${sku}`)
+    }
+  }
+
+  // 🗑️ 发布成功后删除临时图片（等待 Webhook 回传更新）
+  if (successResults.length > 0 && migratedImageUrls.length > 0) {
+    console.log(`🗑️ 发布成功，删除 ${migratedImageUrls.length} 张临时图片...`)
+    const cleanupResult = await cleanupTemporaryImages(supabase, migratedImageUrls)
+    if (cleanupResult.deleted > 0) {
+      console.log(`✅ 已删除 ${cleanupResult.deleted} 张临时图片，等待 Webhook 回传更新图片 URL`)
+    }
+    if (cleanupResult.failed > 0) {
+      console.warn(`⚠️ ${cleanupResult.failed} 张临时图片删除失败（可稍后手动清理）`)
     }
   }
 
@@ -1600,10 +1960,21 @@ async function pullProducts(
         }
       }
 
+      // 获取变体信息
+      let siteVariations: any[] = []
+      if (wooProduct.type === 'variable') {
+        try {
+          siteVariations = await client.getProductVariationsFull(wooId)
+          console.log(`📦 [${sku}] 获取 ${siteVariations.length} 个变体`)
+        } catch (err) {
+          console.warn(`[${sku}] 获取变体失败:`, err)
+        }
+      }
+
       // 获取现有数据并合并（保留其他站点的数据）
       const { data: existingProduct } = await supabase
         .from('products')
-        .select('prices, regular_prices, stock_quantities, stock_statuses, statuses, content, sync_status')
+        .select('prices, regular_prices, stock_quantities, stock_statuses, statuses, content, sync_status, variations, variation_counts')
         .eq('sku', sku)
         .single()
 
@@ -1616,6 +1987,12 @@ async function pullProducts(
         updateData.statuses = { ...existingProduct.statuses, ...updateData.statuses }
         updateData.content = { ...existingProduct.content, ...updateData.content }
         updateData.sync_status = { ...existingProduct.sync_status, ...updateData.sync_status }
+        // 合并变体数据
+        updateData.variations = { ...(existingProduct.variations || {}), [site]: siteVariations }
+        updateData.variation_counts = { ...(existingProduct.variation_counts || {}), [site]: siteVariations.length }
+      } else {
+        updateData.variations = { [site]: siteVariations }
+        updateData.variation_counts = { [site]: siteVariations.length }
       }
 
       // 更新数据库
@@ -1782,6 +2159,223 @@ async function syncOrders(
   return { results }
 }
 
+// ==================== 批量同步变体 ====================
+
+/**
+ * 批量同步指定站点的商品变体
+ * 只更新 variations 和 variation_counts 字段
+ */
+async function syncVariationsBatch(
+  supabase: any,
+  site: SiteKey,
+  limit: number = 50,
+  offset: number = 0
+): Promise<{
+  synced: number
+  failed: number
+  skipped: number
+  total: number
+  hasMore: boolean
+  details: Array<{ sku: string; varCount: number; error?: string }>
+}> {
+  const client = new WooCommerceClient(site)
+  const details: Array<{ sku: string; varCount: number; error?: string }> = []
+  
+  console.log(`🔄 [${site}] 开始同步变体 (limit=${limit}, offset=${offset})`)
+
+  // 获取有 woo_id 的商品
+  const { data: products, error: fetchError, count } = await supabase
+    .from('products')
+    .select('sku, woo_ids, variations, variation_counts', { count: 'exact' })
+    .not(`woo_ids->${site}`, 'is', null)
+    .order('sku')
+    .range(offset, offset + limit - 1)
+
+  if (fetchError) {
+    console.error('获取商品列表失败:', fetchError)
+    throw new Error(`获取商品列表失败: ${fetchError.message}`)
+  }
+
+  const total = count || 0
+  const hasMore = offset + limit < total
+  let synced = 0
+  let failed = 0
+  let skipped = 0
+
+  // 逐个获取变体
+  for (const product of products || []) {
+    const wooId = product.woo_ids?.[site]
+    if (!wooId) {
+      skipped++
+      continue
+    }
+
+    try {
+      const variations = await client.getProductVariationsFull(wooId)
+      
+      // 更新数据库
+      const updatedVariations = { ...(product.variations || {}), [site]: variations }
+      const updatedCounts = { ...(product.variation_counts || {}), [site]: variations.length }
+
+      const { error: updateError } = await supabase
+        .from('products')
+        .update({
+          variations: updatedVariations,
+          variation_counts: updatedCounts,
+          last_synced_at: new Date().toISOString(),
+        })
+        .eq('sku', product.sku)
+
+      if (updateError) {
+        console.error(`[${product.sku}] 更新变体失败:`, updateError)
+        failed++
+        details.push({ sku: product.sku, varCount: 0, error: updateError.message })
+      } else {
+        synced++
+        details.push({ sku: product.sku, varCount: variations.length })
+        console.log(`[${product.sku}] 同步 ${variations.length} 个变体`)
+      }
+    } catch (err) {
+      console.error(`[${product.sku}] 获取变体失败:`, err)
+      failed++
+      details.push({ sku: product.sku, varCount: 0, error: err instanceof Error ? err.message : 'Unknown error' })
+    }
+  }
+
+  console.log(`✅ [${site}] 变体同步完成: ${synced} 成功, ${failed} 失败, ${skipped} 跳过`)
+
+  return { synced, failed, skipped, total, hasMore, details }
+}
+
+// ==================== 重建变体 ====================
+
+interface RebuildResult {
+  site: SiteKey
+  success: boolean
+  deleted: number
+  created: number
+  error?: string
+}
+
+/**
+ * 重建商品变体
+ * 1. 删除所有现有变体
+ * 2. 根据 gender 确定尺码
+ * 3. 创建新变体，SKU 格式: {产品SKU}-{尺码}
+ */
+async function rebuildVariations(
+  supabase: any,
+  sku: string,
+  sites: SiteKey[]
+): Promise<{ sku: string; results: RebuildResult[] }> {
+  console.log(`🔄 重建变体: ${sku} -> ${sites.join(', ')}`)
+
+  // 1. 从 PIM 获取商品数据
+  const { data: product, error: fetchError } = await supabase
+    .from('products')
+    .select('sku, name, woo_ids, prices, regular_prices, attributes')
+    .eq('sku', sku)
+    .single()
+
+  if (fetchError || !product) {
+    throw new Error(`商品不存在: ${sku}`)
+  }
+
+  // 2. 根据 gender 确定尺码
+  const gender = product.attributes?.gender || 'Men'
+  const sizes = getSizesForGender(gender)
+  console.log(`📏 尺码列表 (${gender}): ${sizes.join(', ')}`)
+
+  // 3. 对每个站点重建变体
+  const results: RebuildResult[] = await Promise.all(
+    sites.map(async (site): Promise<RebuildResult> => {
+      const wooId = product.woo_ids?.[site]
+      if (!wooId) {
+        return { site, success: false, deleted: 0, created: 0, error: '商品未发布到该站点' }
+      }
+
+      try {
+        const client = new WooCommerceClient(site)
+        
+        // 获取现有变体
+        const existingVariations = await client.getProductVariationsFull(wooId)
+        const variationIds = existingVariations.map(v => v.id)
+        console.log(`[${site}] 发现 ${variationIds.length} 个现有变体`)
+
+        // 删除所有现有变体
+        if (variationIds.length > 0) {
+          await client.batchDeleteVariations(wooId, variationIds)
+          console.log(`[${site}] 已删除 ${variationIds.length} 个旧变体`)
+        }
+
+        // 获取价格
+        const salePrice = product.prices?.[site] || product.prices?.com || 29.99
+        const regularPrice = product.regular_prices?.[site] || product.regular_prices?.com || salePrice * 2
+
+        // 创建新变体，带正确的 SKU
+        const variationsData = sizes.map(size => ({
+          sku: `${sku}-${size}`,  // 关键：指定正确 SKU
+          regular_price: regularPrice.toString(),
+          sale_price: salePrice.toString(),
+          attributes: [{ id: ATTRIBUTE_IDS.size, option: size }],
+          manage_stock: false,
+        }))
+
+        await client.batchCreateVariations(wooId, variationsData)
+        console.log(`[${site}] 已创建 ${sizes.length} 个新变体`)
+
+        return {
+          site,
+          success: true,
+          deleted: variationIds.length,
+          created: sizes.length,
+        }
+      } catch (err) {
+        console.error(`[${site}] 重建变体失败:`, err)
+        return {
+          site,
+          success: false,
+          deleted: 0,
+          created: 0,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        }
+      }
+    })
+  )
+
+  // 4. 更新 PIM 中的变体数据
+  const successSites = results.filter(r => r.success).map(r => r.site)
+  if (successSites.length > 0) {
+    // 重新获取变体信息
+    const variations: Record<string, any[]> = { ...(product.variations || {}) }
+    const variation_counts: Record<string, number> = { ...(product.variation_counts || {}) }
+
+    for (const site of successSites) {
+      const wooId = product.woo_ids[site]
+      try {
+        const client = new WooCommerceClient(site)
+        const siteVariations = await client.getProductVariationsFull(wooId)
+        variations[site] = siteVariations
+        variation_counts[site] = siteVariations.length
+      } catch (err) {
+        console.warn(`[${site}] 获取新变体信息失败:`, err)
+      }
+    }
+
+    await supabase
+      .from('products')
+      .update({
+        variations,
+        variation_counts,
+        last_synced_at: new Date().toISOString(),
+      })
+      .eq('sku', sku)
+  }
+
+  console.log(`✅ 重建完成: ${successSites.length}/${sites.length} 个站点成功`)
+  return { sku, results }
+}
+
 // ==================== 主入口 ====================
 
 Deno.serve(async (req) => {
@@ -1835,13 +2429,6 @@ Deno.serve(async (req) => {
       case 'sync-products-batch': {
         const results = await syncProductsBatch(supabase, body.skus, body.sites, body.options)
         return new Response(JSON.stringify({ success: true, results }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      case 'sync-all': {
-        const result = await syncAll(supabase)
-        return new Response(JSON.stringify(result), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
@@ -1949,6 +2536,64 @@ Deno.serve(async (req) => {
           })
         } catch (err) {
           console.error(`[${body.site}] 添加订单备注失败:`, err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'get-variations': {
+        try {
+          const client = new WooCommerceClient(body.site)
+          const variations = await client.getProductVariationsFull(body.productId)
+          return new Response(JSON.stringify({ 
+            success: true, 
+            variations,
+            count: variations.length
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error(`[${body.site}] 获取变体失败:`, err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'sync-variations': {
+        try {
+          const { site, limit = 50, offset = 0 } = body as SyncVariationsRequest
+          const result = await syncVariationsBatch(supabase, site, limit, offset)
+          return new Response(JSON.stringify({ success: true, ...result }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error('批量同步变体失败:', err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'rebuild-variations': {
+        try {
+          const { sku, sites } = body as RebuildVariationsRequest
+          const result = await rebuildVariations(supabase, sku, sites)
+          return new Response(JSON.stringify({ success: true, ...result }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error('重建变体失败:', err)
           return new Response(JSON.stringify({
             success: false,
             error: err instanceof Error ? err.message : 'Unknown error'

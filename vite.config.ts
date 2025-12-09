@@ -1,3 +1,4 @@
+import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -7,6 +8,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   // 支持 VITE_, NEXT_PUBLIC_, SUPABASE_ 前缀的环境变量
   envPrefix: ['VITE_', 'NEXT_PUBLIC_', 'SUPABASE_'],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   build: {
     rollupOptions: {
       output: {

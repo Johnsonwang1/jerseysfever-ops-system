@@ -63,12 +63,14 @@ export async function getOrders(params: OrderQueryParams = {}): Promise<OrderQue
     query = query.or(`order_number.ilike.%${search}%,customer_email.ilike.%${search}%,customer_name.ilike.%${search}%`);
   }
 
-  // 日期范围
+  // 日期范围 - 确保包含整天
   if (dateFrom) {
     query = query.gte('date_created', dateFrom);
   }
   if (dateTo) {
-    query = query.lte('date_created', dateTo);
+    // dateTo 需要加上 23:59:59.999 来包含当天所有订单
+    const dateToEnd = `${dateTo}T23:59:59.999Z`;
+    query = query.lte('date_created', dateToEnd);
   }
 
   // 排序和分页

@@ -5,5 +5,5 @@ export { ProductTable } from './ProductTable';
 export { CategorySelector } from './CategorySelector';
 export { DeleteConfirmModal } from './DeleteConfirmModal';
 export { SyncConfirmModal } from './SyncConfirmModal';
-export { BatchActionModal } from './BatchActionModal';
+export { BatchActionModal, type PullMode } from './BatchActionModal';
 

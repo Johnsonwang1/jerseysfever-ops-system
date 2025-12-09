@@ -54,6 +54,59 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 直接调用 WooCommerce REST API 获取商品变体
+ */
+async function fetchVariationsFromWooCommerce(site: Site, productId: number): Promise<any[]> {
+  const credentials = getWooCredentials(site)
+  if (!credentials.key || !credentials.secret) {
+    console.warn(`[${site}] Missing WooCommerce credentials, skipping variations`)
+    return []
+  }
+
+  const apiUrl = `${SITE_URLS[site]}/wp-json/wc/v3/products/${productId}/variations?per_page=100`
+  const auth = btoa(`${credentials.key}:${credentials.secret}`)
+
+  try {
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'JerseysFever-Webhook/1.0',
+      },
+    })
+
+    if (!response.ok) {
+      console.warn(`[${site}] Failed to fetch variations: ${response.status}`)
+      return []
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.includes('application/json')) {
+      console.warn(`[${site}] Variations API returned non-JSON`)
+      return []
+    }
+
+    const variations = await response.json()
+    return variations.map((v: any) => ({
+      id: v.id,
+      sku: v.sku || '',
+      attributes: (v.attributes || []).map((a: any) => ({
+        name: a.name,
+        option: a.option,
+      })),
+      regular_price: v.regular_price || '',
+      sale_price: v.sale_price || '',
+      stock_quantity: v.stock_quantity,
+      stock_status: v.stock_status || 'instock',
+    }))
+  } catch (err) {
+    console.warn(`[${site}] Error fetching variations:`, err)
+    return []
+  }
+}
+
+/**
  * 直接调用 WooCommerce REST API 获取完整商品数据
  * 避免 Edge Function 之间调用的授权问题
  *
@@ -516,6 +569,14 @@ Deno.serve(async (req) => {
       short_description: fullProduct.short_description || '',
     }
 
+    // 获取该站点的变体信息
+    let siteVariations: any[] = []
+    if (fullProduct.type === 'variable') {
+      console.log(`[${deliveryId}] [${site}] 获取变体信息...`)
+      siteVariations = await fetchVariationsFromWooCommerce(site, productId)
+      console.log(`[${deliveryId}] [${site}] 获取到 ${siteVariations.length} 个变体`)
+    }
+
     if (!existing) {
       // ==================== 新建商品 ====================
       // 共享数据只从 .com 站设置，其他站留空
@@ -531,6 +592,9 @@ Deno.serve(async (req) => {
         content: { [site]: siteContent },
         sync_status: { [site]: 'synced' },
         date_modified: productDateModified ? { [site]: productDateModified } : {},
+        // 变体信息（按站点存储）
+        variations: siteVariations.length > 0 ? { [site]: siteVariations } : {},
+        variation_counts: siteVariations.length > 0 ? { [site]: siteVariations.length } : {},
         last_synced_at: new Date().toISOString(),
       }
 
@@ -542,7 +606,7 @@ Deno.serve(async (req) => {
         newProduct.categories = categories
         newProduct.attributes = Object.keys(attributes).length > 0 ? attributes : {}
         newProduct.published_at = productDateCreated
-        console.log(`[${deliveryId}] Creating product from .com with shared data: ${images.length} images`)
+        console.log(`[${deliveryId}] Creating product from .com with shared data: ${images.length} images, ${siteVariations.length} variations`)
       } else {
         // 非 .com 站：设置最小共享数据（name 是必填字段）
         newProduct.name = fullProduct.name || sku
@@ -583,6 +647,9 @@ Deno.serve(async (req) => {
         content: { ...existing.content, [site]: mergedSiteContent },
         sync_status: { ...existing.sync_status, [site]: 'synced' },
         date_modified: { ...(existing.date_modified || {}), [site]: productDateModified },
+        // 更新变体信息（按站点合并）
+        variations: { ...(existing.variations || {}), [site]: siteVariations },
+        variation_counts: { ...(existing.variation_counts || {}), [site]: siteVariations.length },
         last_synced_at: new Date().toISOString(),
       }
 

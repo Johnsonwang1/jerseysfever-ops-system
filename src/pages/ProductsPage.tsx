@@ -1,41 +1,113 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Package, Loader2, AlertCircle, Globe, ChevronDown, Plus, Wifi, Tag, X, RefreshCw, Trash2 } from 'lucide-react';
-import { getLocalProducts, subscribeToProducts, getProductStats, type LocalProduct } from '../lib/products';
+import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Package, Loader2, AlertCircle, Globe, ChevronDown, Plus, Wifi, Tag, X, Trash2, Upload, Download } from 'lucide-react';
+import { type LocalProduct } from '../lib/products';
+import { supabase } from '../lib/supabase';
 import { SITES } from '../lib/attributes';
-import { getCategoriesFromDb } from '../lib/supabase';
-import type { SiteKey, WooCategory } from '../lib/types';
+import type { SiteKey } from '../lib/types';
 import { ProductDetailModal } from '../components/ProductDetailModal';
-import { SyncProgressPanel, StatsCards, ProductFilters, ProductTable, DeleteConfirmModal, SyncConfirmModal, BatchActionModal } from '../components/products';
+import { SyncProgressPanel, StatsCards, ProductFilters, ProductTable, DeleteConfirmModal, SyncConfirmModal, BatchActionModal, type PullMode } from '../components/products';
+import { startSync, endSync } from '../components/SyncToast';
 import { BatchCategoryModal } from '../components/products/BatchCategoryModal';
 import { UploadModal } from '../components/UploadModal';
-import { syncAllFromAllSites, syncAllFromSite, type SyncProgressCallback } from '../lib/sync-service';
-import { deleteProductFromSites, syncProductToSites, type DeleteResult, type SyncResult } from '../lib/sync-api';
+import { syncAllFromAllSites, syncAllFromSite, subscribeSyncProgress, getSyncProgress, type SyncProgressCallback, type SyncProgress } from '../lib/sync-service';
+import { deleteProductFromSites, syncProductToSites, pullProductsFromSite, syncAllVariations, type DeleteResult, type SyncResult, type SyncField, type SyncOptions } from '../lib/sync-api';
 import { useAuth } from '../lib/auth';
+import { 
+  useProducts,
+  useProductStats, 
+  useAiPendingSkus, 
+  useCategories,
+  useProductsRealtime, 
+  useAiTasksRealtime,
+  invalidateProducts,
+  useBatchPullVariations,
+  useBatchRebuildVariations,
+  type SpecialFilter
+} from '../hooks/useProducts';
 
 export function ProductsPage() {
   const { isAdmin } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // 数据状态
-  const [products, setProducts] = useState<LocalProduct[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [isRealtime, setIsRealtime] = useState(false);
-  const [stats, setStats] = useState<{
-    total: number;
-    bySyncStatus: Record<SiteKey, { synced: number; error: number; pending: number }>;
-  }>({ total: 0, bySyncStatus: {} as any });
+  // 从 URL 读取初始筛选状态
+  const getInitialFilters = (): SpecialFilter[] => {
+    const filter = searchParams.get('filter');
+    const validFilters: SpecialFilter[] = ['ai_pending', 'unsync', 'draft', 'var_zero', 'var_one', 'var_sku_mismatch'];
+    if (filter) {
+      return filter.split(',').filter((f): f is SpecialFilter => validFilters.includes(f as SpecialFilter));
+    }
+    return [];
+  };
 
   // 筛选状态
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') || '');
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '');
+  const [categoryFilter, setCategoryFilter] = useState<string[]>(() => {
+    const cat = searchParams.get('cat');
+    return cat ? cat.split(',') : [];
+  });
   const [categoryMode, setCategoryMode] = useState<'and' | 'or'>('or');
   const [excludeMode, setExcludeMode] = useState(false);
-  const [categories, setCategories] = useState<WooCategory[]>([]);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [page, setPage] = useState(() => parseInt(searchParams.get('page') || '1', 10));
+  const [perPage, setPerPage] = useState(20);
+  
+  // 特殊筛选状态
+  const [specialFilters, setSpecialFilters] = useState<SpecialFilter[]>(getInitialFilters);
+
+  // React Query hooks
+  const { data: statsData, refetch: refetchStats } = useProductStats();
+  const { data: aiPendingSkusData } = useAiPendingSkus();
+  const { data: categoriesData } = useCategories('com');
+  
+  // 商品列表 - 使用 React Query
+  const aiPendingSkus = aiPendingSkusData || new Set<string>();
+  const { 
+    data: productsData, 
+    isLoading, 
+    error: productsError,
+    refetch: refetchProducts
+  } = useProducts({
+    page,
+    perPage,
+    search: searchQuery || undefined,
+    categories: categoryFilter.length > 0 ? categoryFilter : undefined,
+    categoryMode: categoryFilter.length > 1 ? categoryMode : undefined,
+    excludeMode: categoryFilter.length > 0 ? excludeMode : undefined,
+    specialFilters: specialFilters.length > 0 ? specialFilters : undefined,
+    aiPendingSkus,
+  });
+  
+  // Realtime 订阅（自动 invalidate）
+  useProductsRealtime();
+  useAiTasksRealtime();
+
+  // 批量操作 mutations
+  const batchRebuildMutation = useBatchRebuildVariations();
+  const batchPullMutation = useBatchPullVariations();
+
+  // 从 React Query 数据中提取
+  const products = productsData?.products || [];
+  const total = productsData?.total || 0;
+  const totalPages = productsData?.totalPages || 1;
+  const error = productsError ? (productsError as Error).message : null;
+  const isRealtime = true; // React Query + Realtime 始终是实时的
+  
+  // 使用 React Query 的数据
+  const stats = statsData || { total: 0, bySyncStatus: {} as Record<SiteKey, { synced: number; error: number; pending: number }> };
+  const categories = categoriesData || [];
+
+  // 同步筛选状态到 URL
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set('q', searchQuery);
+    if (categoryFilter.length > 0) params.set('cat', categoryFilter.join(','));
+    if (specialFilters.length > 0) params.set('filter', specialFilters.join(','));
+    if (page > 1) params.set('page', page.toString());
+    
+    setSearchParams(params, { replace: true });
+  }, [searchQuery, categoryFilter, specialFilters, page, setSearchParams]);
 
   // 弹窗状态
   const [selectedProduct, setSelectedProduct] = useState<LocalProduct | null>(null);
@@ -55,7 +127,6 @@ export function ProductsPage() {
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const syncMenuRef = useRef<HTMLDivElement>(null);
   const [deletingSku, _setDeletingSku] = useState<string | null>(null);
-  const [perPage, setPerPage] = useState(20);
 
   // 删除确认弹窗状态
   const [deleteModalProduct, setDeleteModalProduct] = useState<LocalProduct | null>(null);
@@ -69,9 +140,12 @@ export function ProductsPage() {
   const [syncingSku, setSyncingSku] = useState<string | null>(null);
 
   // 批量操作弹窗状态
-  const [batchAction, setBatchAction] = useState<'sync' | 'delete' | null>(null);
+  const [batchAction, setBatchAction] = useState<'sync' | 'delete' | 'update' | 'pull' | null>(null);
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [batchResults, setBatchResults] = useState<{ sku: string; success: boolean; error?: string }[] | undefined>(undefined);
+
+  // GCP 全量同步进度状态
+  const [gcpSyncProgress, setGcpSyncProgress] = useState<SyncProgress | null>(null);
 
   // 实时搜索（防抖 300ms）
   const handleSearchInput = (value: string) => {
@@ -100,67 +174,38 @@ export function ProductsPage() {
     };
   }, [showSyncMenu]);
 
-  // 加载商品
-  const loadProducts = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await getLocalProducts({
-        page,
-        perPage,
-        search: searchQuery || undefined,
-        categories: categoryFilter.length > 0 ? categoryFilter : undefined,
-        categoryMode: categoryFilter.length > 1 ? categoryMode : undefined,
-        excludeMode: categoryFilter.length > 0 ? excludeMode : undefined,
-      });
-      setProducts(result.products);
-      setTotalPages(result.totalPages);
-      setTotal(result.total);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [page, perPage, searchQuery, categoryFilter, categoryMode, excludeMode]);
-
-  // 加载分类（从数据库）
-  const loadCategories = useCallback(async () => {
-    try {
-      const cats = await getCategoriesFromDb('com');
-      setCategories(cats.filter(c => c.name !== 'Uncategorized'));
-    } catch (err) {
-      console.error('Failed to load categories:', err);
-    }
-  }, []);
-
-  // 加载统计
-  const loadStats = useCallback(async () => {
-    try {
-      const data = await getProductStats();
-      setStats(data);
-    } catch (err) {
-      console.error('Failed to load stats:', err);
-    }
-  }, []);
-
+  // 订阅 GCP 同步进度（Realtime）
   useEffect(() => {
-    loadProducts();
-    loadStats();
-    loadCategories();
-  }, [loadProducts, loadStats, loadCategories]);
-
-  // Realtime 订阅
-  useEffect(() => {
-    const unsubscribe = subscribeToProducts(() => {
-      loadProducts();
-      loadStats();
+    // 页面加载时检查当前同步状态
+    getSyncProgress().then((progress) => {
+      if (progress) {
+        setGcpSyncProgress(progress);
+        if (progress.status === 'running') {
+          setIsSyncing(true);
+        }
+      }
     });
-    setIsRealtime(true);
+
+    // 订阅 Realtime 更新
+    const unsubscribe = subscribeSyncProgress((progress) => {
+      setGcpSyncProgress(progress);
+      if (progress.status === 'running') {
+        setIsSyncing(true);
+      } else if (progress.status === 'completed' || progress.status === 'error') {
+        setIsSyncing(false);
+        // 同步完成后刷新商品列表
+        invalidateProducts();
+      }
+    });
+
     return () => {
       unsubscribe();
-      setIsRealtime(false);
     };
-  }, [loadProducts, loadStats]);
+  }, []);
+
+  // 刷新函数（用于同步后刷新）
+  const loadProducts = refetchProducts;
+  const loadStats = refetchStats;
 
   // 同步回调
   const syncProgressCallback: SyncProgressCallback = (progress) => {
@@ -223,6 +268,71 @@ export function ProductsPage() {
     }
   };
 
+  // 仅同步变体
+  const handleSyncVariations = async (site: SiteKey) => {
+    if (isSyncing) return;
+    setShowSyncMenu(false);
+    
+    const siteConfig = SITES.find(s => s.key === site);
+    if (!confirm(`确定要同步 ${siteConfig?.flag} ${siteConfig?.name} 的所有商品变体吗？\n\n这只会更新变体信息，不会修改其他数据。`)) return;
+
+    setIsSyncing(true);
+    const toastId = startSync(`正在同步 ${siteConfig?.name} 变体...`);
+
+    try {
+      const result = await syncAllVariations(site, (progress) => {
+        // 更新进度提示（可选）
+        console.log(`[${site}] 变体同步进度: ${progress.synced}/${progress.total} - ${progress.current}`);
+      });
+      
+      await loadProducts();
+      endSync(toastId, true, `${siteConfig?.name} 变体同步完成！成功: ${result.synced}, 失败: ${result.failed}`);
+    } catch (err) {
+      endSync(toastId, false, '变体同步失败: ' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 重建选中商品的变体（使用 useMutation，5 个并行，带重试）
+  const handleRebuildVariations = async () => {
+    if (isSyncing || batchRebuildMutation.isPending) return;
+    if (selectedSkus.size === 0) {
+      alert('请先选择要重建变体的商品');
+      return;
+    }
+    
+    const count = selectedSkus.size;
+    if (!confirm(`确定要重建 ${count} 个商品的变体吗？\n\n⚠️ 这将删除旧变体并创建新变体（SKU 格式: 产品SKU-尺码）\n\n注意：此操作不可撤销，可能影响已有订单。`)) return;
+
+    setIsSyncing(true);
+    const toastId = startSync(`正在重建 ${count} 个商品的变体...`);
+    
+    try {
+      const results = await batchRebuildMutation.mutateAsync({
+        skus: Array.from(selectedSkus),
+        sites: ['com', 'uk', 'de', 'fr'],
+      });
+      
+      const success = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+      const failedSkus = results.filter(r => !r.success).map(r => r.sku);
+      
+      setSelectedSkus(new Set());
+      
+      if (failedSkus.length > 0) {
+        console.error('失败的 SKU:', failedSkus);
+        endSync(toastId, false, `重建完成！成功: ${success}, 失败: ${failed}\n失败SKU: ${failedSkus.slice(0, 5).join(', ')}${failedSkus.length > 5 ? '...' : ''}`);
+      } else {
+        endSync(toastId, true, `重建完成！全部 ${success} 个成功`);
+      }
+    } catch (err) {
+      endSync(toastId, false, '重建变体失败: ' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // 打开删除确认弹窗
   const handleDeleteProduct = (sku: string) => {
     const product = products.find(p => p.sku === sku);
@@ -268,17 +378,38 @@ export function ProductsPage() {
     }
   };
 
-  // 执行同步单个商品
-  const handleConfirmSync = async (sites: SiteKey[]) => {
+  // 执行同步单个商品（支持推送和拉取，支持多站点）
+  const handleConfirmSync = async (sites: SiteKey[], mode: 'push' | 'pull', fields?: SyncField[]) => {
     if (!syncModalProduct) return;
 
     setIsSyncingProduct(true);
     setSyncingSku(syncModalProduct.sku);
     try {
-      const results = await syncProductToSites(syncModalProduct.sku, sites);
-      setSyncResults(results);
+      if (mode === 'pull') {
+        // 从多个站点拉取数据
+        const allResults: SyncResult[] = [];
+        for (const site of sites) {
+          const pullResults = await pullProductsFromSite([syncModalProduct.sku], site);
+          // 转换为 SyncResult 格式
+          for (const r of pullResults) {
+            allResults.push({
+              site,
+              success: r.success,
+              error: r.error,
+            });
+          }
+        }
+        setSyncResults(allResults);
+        // 刷新列表
+        await loadProducts();
+      } else {
+        // 推送到站点（带字段选择）
+        const options: SyncOptions | undefined = fields ? { fields } : undefined;
+        const results = await syncProductToSites(syncModalProduct.sku, sites, options);
+        setSyncResults(results);
+      }
     } catch (err) {
-      alert('同步失败: ' + (err instanceof Error ? err.message : '未知错误'));
+      alert('操作失败: ' + (err instanceof Error ? err.message : '未知错误'));
     } finally {
       setIsSyncingProduct(false);
       setSyncingSku(null);
@@ -291,18 +422,121 @@ export function ProductsPage() {
     setSyncResults(undefined);
   };
 
-  // 批量同步（推送到多个站点）
-  const handleBatchSync = async (sites: SiteKey[]) => {
+  // 异步执行同步（后台执行，关闭窗口）
+  const handleConfirmSyncAsync = (sites: SiteKey[], mode: 'push' | 'pull', fields?: SyncField[]) => {
+    if (!syncModalProduct) return;
+    const sku = syncModalProduct.sku;
+
+    // 开始后台任务
+    startSync();
+
+    // 异步执行
+    (async () => {
+      try {
+        if (mode === 'pull') {
+          // 从多个站点拉取数据
+          for (const site of sites) {
+            await pullProductsFromSite([sku], site);
+          }
+          endSync(true, `${sku} 拉取完成`);
+        } else {
+          // 推送到站点
+          const options: SyncOptions | undefined = fields ? { fields } : undefined;
+          await syncProductToSites(sku, sites, options);
+          endSync(true, `${sku} 更新完成`);
+        }
+        // 刷新列表
+        await loadProducts();
+        await loadStats();
+      } catch (err) {
+        endSync(false, `${sku} 操作失败`);
+      }
+    })();
+  };
+
+  // 批量拉取（从多个站点获取数据到 PIM）
+  const handleBatchPull = async (sites: SiteKey[], _deleteLocal?: boolean, _fields?: SyncField[], pullMode?: PullMode) => {
+    const selectedProducts = products.filter(p => selectedSkus.has(p.sku));
+    const skus = selectedProducts.map(p => p.sku);
+
+    setIsBatchProcessing(true);
+    try {
+      // 仅拉取变体模式：使用优化的批量拉取（10 个并行 + 重试）
+      if (pullMode === 'variations') {
+        const allResults: { sku: string; success: boolean; error?: string }[] = [];
+        
+        // 从每个选中的站点拉取变体
+        for (const site of sites) {
+          console.log(`📥 从 ${site} 站点拉取变体...`);
+          const results = await batchPullMutation.mutateAsync({ skus, site });
+          
+          // 合并结果
+          for (const r of results) {
+            const existing = allResults.find(e => e.sku === r.sku);
+            if (existing) {
+              if (!existing.success && r.success) {
+                existing.success = true;
+                existing.error = undefined;
+              }
+            } else {
+              allResults.push(r);
+            }
+          }
+        }
+        
+        setBatchResults(allResults);
+      } else {
+        // 全部数据模式：原有逻辑
+        const allResults: { sku: string; success: boolean; error?: string }[] = [];
+
+        for (const site of sites) {
+          const pullResults = await pullProductsFromSite(skus, site);
+          
+          for (const r of pullResults) {
+            const existing = allResults.find(e => e.sku === r.sku);
+            if (existing) {
+              if (!existing.success && r.success) {
+                existing.success = true;
+                existing.error = undefined;
+              }
+            } else {
+              allResults.push({
+                sku: r.sku,
+                success: r.success,
+                error: r.error,
+              });
+            }
+          }
+        }
+
+        setBatchResults(allResults);
+      }
+
+      // 刷新列表
+      await loadProducts();
+      await loadStats();
+    } catch (err) {
+      alert('批量拉取失败: ' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  // 批量同步/更新（推送到多个站点）
+  const handleBatchSync = async (sites: SiteKey[], _deleteLocal?: boolean, fields?: SyncField[]) => {
     const selectedProducts = products.filter(p => selectedSkus.has(p.sku));
 
     setIsBatchProcessing(true);
     try {
       const results: { sku: string; success: boolean; error?: string }[] = [];
 
+      // 构建同步选项
+      const options: SyncOptions | undefined = fields ? { fields } : undefined;
+
       // 逐个同步商品到多站点
       for (const product of selectedProducts) {
         try {
-          const syncResults = await syncProductToSites(product.sku, sites);
+          const syncResults = await syncProductToSites(product.sku, sites, options);
           const allSuccess = syncResults.every(r => r.success);
           results.push({
             sku: product.sku,
@@ -382,40 +616,79 @@ export function ProductsPage() {
     }
   };
 
+  // 批量操作异步执行（后台执行，关闭窗口）
+  const handleBatchAsync = (sites: SiteKey[], _deleteLocal?: boolean, fields?: SyncField[]) => {
+    const selectedProducts = products.filter(p => selectedSkus.has(p.sku));
+    const skus = selectedProducts.map(p => p.sku);
+    const action = batchAction;
+
+    // 开始后台任务
+    startSync();
+
+    // 清除选择和关闭弹窗已经在调用处处理
+
+    // 异步执行
+    (async () => {
+      try {
+        if (action === 'pull') {
+          // 批量拉取
+          for (const site of sites) {
+            await pullProductsFromSite(skus, site);
+          }
+          endSync(true, `${skus.length} 个商品拉取完成`);
+        } else if (action === 'update' || action === 'sync') {
+          // 批量更新/同步
+          const options: SyncOptions | undefined = fields ? { fields } : undefined;
+          for (const sku of skus) {
+            await syncProductToSites(sku, sites, options);
+          }
+          endSync(true, `${skus.length} 个商品更新完成`);
+        }
+        // 刷新列表
+        await loadProducts();
+        await loadStats();
+        setSelectedSkus(new Set());
+      } catch (err) {
+        endSync(false, `批量操作失败`);
+      }
+    })();
+  };
+
   // 清除筛选
   const handleClearFilters = () => {
     setSearchInput('');
     setSearchQuery('');
     setCategoryFilter([]);
     setExcludeMode(false);
+    setSpecialFilters([]);
     setPage(1);
   };
 
-  const hasFilters = Boolean(searchQuery || categoryFilter.length > 0);
+  const hasFilters = Boolean(searchQuery || categoryFilter.length > 0 || specialFilters.length > 0);
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 固定头部区域 */}
-      <div className="sticky top-0 z-20 bg-gray-50 px-4 lg:px-6 pt-4 lg:pt-6 pb-4 space-y-4">
+    <div className="h-full flex flex-col overflow-auto">
+      {/* 头部区域 - 不再固定 */}
+      <div className="bg-gray-50 px-4 sm:px-6 pt-4 sm:pt-6 pb-4 sm:pb-6 space-y-4 sm:space-y-5">
         {/* 头部 */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <Package className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-3">
+          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+            <Package className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 flex-shrink-0" />
             <h1 className="text-lg sm:text-xl font-semibold text-gray-900">商品管理</h1>
             <span className="hidden sm:inline text-sm text-gray-500">（PIM - 以 SKU 为主键）</span>
             {isRealtime && (
-              <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
-                <Wifi className="w-3 h-3" />
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-green-100 text-green-700">
+                <Wifi className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">实时更新中</span>
                 <span className="sm:hidden">实时</span>
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
             {/* 上架商品按钮 */}
             <button
               onClick={() => setShowUploadModal(true)}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition-colors"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2.5 text-sm text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">上架商品</span>
@@ -428,7 +701,7 @@ export function ProductsPage() {
                 <button
                   onClick={() => setShowSyncMenu(!showSyncMenu)}
                   disabled={isSyncing}
-                  className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2.5 text-sm text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50"
                 >
                   {isSyncing ? (
                     <>
@@ -465,6 +738,20 @@ export function ProductsPage() {
                           仅同步 {site.name}
                         </button>
                       ))}
+                      {/* 同步变体 */}
+                      <div className="border-t border-gray-100 my-1" />
+                      <div className="px-4 py-1 text-xs text-gray-400 font-medium">仅同步变体</div>
+                      {SITES.map((site) => (
+                        <button
+                          key={`var-${site.key}`}
+                          onClick={() => handleSyncVariations(site.key)}
+                          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <span>{site.flag}</span>
+                          <span className="flex-1">{site.name} 变体</span>
+                          <Package className="w-3 h-3 text-orange-500" />
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -472,14 +759,52 @@ export function ProductsPage() {
             </div>
           </div>
 
-        {/* 同步进度 */}
-        {isSyncing && <SyncProgressPanel progress={syncProgress} />}
+        {/* GCP 全量同步进度 */}
+        {gcpSyncProgress && gcpSyncProgress.status === 'running' && (
+          <div className="mt-4 sm:mt-5 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/30 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full" />
+                <span className="font-medium text-blue-400">
+                  正在从 {gcpSyncProgress.site?.toUpperCase()} 站点同步...
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-400">
+                  {gcpSyncProgress.current} / {gcpSyncProgress.total}
+                </span>
+                <button
+                  onClick={async () => {
+                    await supabase.from('sync_progress').update({ status: 'cancelled', message: '用户取消' }).eq('id', 'current');
+                  }}
+                  className="px-3 py-1 text-xs bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
+                >
+                  取消同步
+                </button>
+              </div>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2 mb-2">
+              <div 
+                className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${gcpSyncProgress.total > 0 ? (gcpSyncProgress.current / gcpSyncProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>✅ 成功: {gcpSyncProgress.success}</span>
+              <span>❌ 失败: {gcpSyncProgress.failed}</span>
+              <span>{gcpSyncProgress.message}</span>
+            </div>
+          </div>
+        )}
+
+        {/* 同步进度（旧版） */}
+        {isSyncing && Object.keys(syncProgress).length > 0 && <div className="mt-4 sm:mt-5"><SyncProgressPanel progress={syncProgress} /></div>}
 
         {/* 统计卡片 */}
-        <StatsCards stats={stats} />
+        <div className="mt-4 sm:mt-5"><StatsCards stats={stats} /></div>
 
         {/* 搜索和筛选 */}
-        <ProductFilters
+        <div className="mt-4 sm:mt-5"><ProductFilters
           searchInput={searchInput}
           onSearchChange={handleSearchInput}
           onSearchClear={() => {
@@ -502,13 +827,18 @@ export function ProductsPage() {
           categories={categories}
           onReset={handleClearFilters}
           hasFilters={hasFilters}
-        />
+          specialFilters={specialFilters}
+          onSpecialFiltersChange={(filters) => {
+            setSpecialFilters(filters);
+            setPage(1);
+          }}
+        /></div>
 
         {/* 批量操作栏 */}
         {selectedSkus.size > 0 && (
-          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl shadow-sm">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3 flex-wrap">
+          <div className="mt-4 sm:mt-5 p-4 sm:p-5 bg-blue-50 border border-blue-200 rounded-xl shadow-sm">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-3">
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
                 <span className="text-sm text-blue-700">
                   已选择 <strong>{selectedSkus.size}</strong> 个商品
                 </span>
@@ -534,10 +864,10 @@ export function ProductsPage() {
                   (Shift+点击可范围选择)
                 </span>
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex items-center gap-2.5 sm:gap-3 w-full sm:w-auto flex-wrap">
                 <button
                   onClick={() => setShowBatchCategoryModal(true)}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-gray-600 text-white hover:bg-gray-700 rounded-lg"
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 text-sm bg-gray-600 text-white hover:bg-gray-700 rounded-lg transition-colors"
                 >
                   <Tag className="w-4 h-4" />
                   <span className="hidden sm:inline">批量修改类目</span>
@@ -545,21 +875,42 @@ export function ProductsPage() {
                 </button>
                 <button
                   onClick={() => {
-                    setBatchAction('sync');
+                    setBatchAction('pull');
                     setBatchResults(undefined);
                   }}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg"
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors"
                 >
-                  <RefreshCw className="w-4 h-4" />
-                  <span className="hidden sm:inline">批量同步</span>
-                  <span className="sm:hidden">同步</span>
+                  <Download className="w-4 h-4" />
+                  <span className="hidden sm:inline">从站点拉取</span>
+                  <span className="sm:hidden">拉取</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setBatchAction('update');
+                    setBatchResults(undefined);
+                  }}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 text-sm bg-green-600 text-white hover:bg-green-700 rounded-lg transition-colors"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span className="hidden sm:inline">批量更新到站点</span>
+                  <span className="sm:hidden">更新</span>
+                </button>
+                <button
+                  onClick={handleRebuildVariations}
+                  disabled={isSyncing}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 text-sm bg-orange-600 text-white hover:bg-orange-700 rounded-lg transition-colors disabled:opacity-50"
+                  title="删除旧变体并重建（修复 SKU 不匹配问题）"
+                >
+                  <Package className="w-4 h-4" />
+                  <span className="hidden sm:inline">重建变体</span>
+                  <span className="sm:hidden">变体</span>
                 </button>
                 <button
                   onClick={() => {
                     setBatchAction('delete');
                     setBatchResults(undefined);
                   }}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-red-600 text-white hover:bg-red-700 rounded-lg"
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 text-sm bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />
                   <span className="hidden sm:inline">批量删除</span>
@@ -572,7 +923,7 @@ export function ProductsPage() {
       </div>
 
       {/* 可滚动内容区域 */}
-      <div className="flex-1 px-4 lg:px-6 pb-4 lg:pb-6 overflow-auto">
+      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6">
         {/* 错误提示 */}
         {error && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
@@ -660,6 +1011,7 @@ export function ProductsPage() {
           product={syncModalProduct}
           onClose={handleCloseSyncModal}
           onConfirm={handleConfirmSync}
+          onConfirmAsync={handleConfirmSyncAsync}
           isSyncing={isSyncingProduct}
           syncResults={syncResults}
         />
@@ -671,7 +1023,8 @@ export function ProductsPage() {
           action={batchAction}
           products={products.filter(p => selectedSkus.has(p.sku))}
           onClose={handleCloseBatchModal}
-          onConfirm={batchAction === 'sync' ? handleBatchSync : handleBatchDelete}
+          onConfirm={batchAction === 'delete' ? handleBatchDelete : batchAction === 'pull' ? handleBatchPull : handleBatchSync}
+          onConfirmAsync={batchAction !== 'delete' ? handleBatchAsync : undefined}
           isProcessing={isBatchProcessing}
           results={batchResults}
         />

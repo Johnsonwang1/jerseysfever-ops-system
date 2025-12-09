@@ -1,22 +1,42 @@
 import { useState, useRef } from 'react';
-import { Plus, GripVertical, Image as ImageIcon, Loader2, ZoomIn, Trash2 } from 'lucide-react';
+import { Plus, GripVertical, Image as ImageIcon, Loader2, ZoomIn, Trash2, Copy, CheckCircle2, Sparkles } from 'lucide-react';
 import { uploadImageToStorage } from '../lib/supabase';
 import { ImageLightbox } from './ImageLightbox';
+import { AIImageModal } from './AIImageModal';
 
 interface ImageGalleryProps {
   images: string[];
   onChange: (images: string[]) => void;
   editable?: boolean;
+  showLinks?: boolean; // 是否显示图片链接
+  onCopyLink?: (url: string, index: number) => void; // 复制链接回调
+  copiedIndex?: number | null; // 已复制的索引
+  showAIButton?: boolean; // 是否显示 AI 处理按钮
+  sku?: string; // 商品 SKU（用于 AI 任务管理）
 }
 
-export function ImageGallery({ images, onChange, editable = true }: ImageGalleryProps) {
+export function ImageGallery({ images, onChange, editable = true, showLinks = false, onCopyLink, copiedIndex = null, showAIButton = true, sku = '' }: ImageGalleryProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [deleteConfirmIndex, setDeleteConfirmIndex] = useState<number | null>(null);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 复制链接
+  const handleCopyLink = async (url: string, index: number) => {
+    if (onCopyLink) {
+      onCopyLink(url, index);
+    } else {
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch (err) {
+        console.error('复制失败:', err);
+      }
+    }
+  };
 
   // 打开删除确认弹窗
   const handleDeleteClick = (e: React.MouseEvent, index: number) => {
@@ -114,7 +134,7 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
     <div className="flex flex-col h-full">
       {/* 主图预览 */}
       <div
-        className={`flex-1 bg-gray-50 rounded-xl overflow-hidden mb-4 flex items-center justify-center min-h-[300px] relative group ${
+        className={`flex-1 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl overflow-hidden mb-4 sm:mb-5 flex items-center justify-center min-h-[300px] sm:min-h-[350px] relative group shadow-inner ${
           images.length > 0 ? 'cursor-zoom-in' : ''
         }`}
         onClick={handleOpenLightbox}
@@ -124,61 +144,121 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
             <img
               src={images[selectedIndex]}
               alt=""
-              className="max-w-full max-h-full object-contain"
+              className="max-w-full max-h-full object-contain drop-shadow-lg"
             />
             {/* 放大提示 */}
-            <div className="absolute bottom-3 right-3 p-2 bg-black/50 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
+            <div className="absolute bottom-4 right-4 px-3 py-2 bg-black/70 backdrop-blur-sm rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 shadow-lg">
               <ZoomIn className="w-4 h-4" />
-              <span className="text-xs">点击放大</span>
+              <span className="text-xs font-medium">点击放大</span>
             </div>
+            {/* AI 处理按钮 */}
+            {showAIButton && editable && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAiModalOpen(true);
+                }}
+                className="absolute top-4 right-4 px-3 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 shadow-lg hover:from-purple-700 hover:to-indigo-700"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span className="text-xs font-medium">AI 处理</span>
+              </button>
+            )}
           </>
         ) : (
-          <div className="text-gray-400 flex flex-col items-center gap-2">
-            <ImageIcon className="w-16 h-16" />
-            <span className="text-sm">暂无图片</span>
+          <div className="text-gray-400 flex flex-col items-center gap-3">
+            <div className="p-4 bg-white/50 rounded-full">
+              <ImageIcon className="w-12 h-12" />
+            </div>
+            <span className="text-sm font-medium">暂无图片</span>
           </div>
         )}
       </div>
 
       {/* 缩略图列表 */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-3 flex-wrap">
         {images.map((img, index) => (
           <div
             key={index}
-            draggable={editable}
-            onDragStart={() => handleDragStart(index)}
-            onDragOver={(e) => handleDragOver(e, index)}
-            onDragEnd={handleDragEnd}
-            onClick={() => setSelectedIndex(index)}
-            className={`relative group w-20 h-20 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
-              selectedIndex === index
-                ? 'border-blue-500 shadow-md'
-                : 'border-transparent hover:border-gray-300'
-            } ${draggedIndex === index ? 'opacity-50' : ''}`}
+            className="relative group"
           >
-            <img
-              src={img}
-              alt=""
-              className="w-full h-full object-cover"
-            />
+            <div className="flex flex-col gap-2">
+              {/* 图片容器 */}
+              <div
+                draggable={editable}
+                onDragStart={() => handleDragStart(index)}
+                onDragOver={(e) => handleDragOver(e, index)}
+                onDragEnd={handleDragEnd}
+                onClick={() => setSelectedIndex(index)}
+                className={`relative w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden cursor-pointer border-2 transition-all shadow-sm ${
+                  selectedIndex === index
+                    ? 'border-blue-500 shadow-lg shadow-blue-500/20 ring-2 ring-blue-500/20 scale-105'
+                    : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
+                } ${draggedIndex === index ? 'opacity-50 scale-95' : ''}`}
+              >
+                <img
+                  src={img}
+                  alt=""
+                  className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                />
 
-            {/* 拖拽手柄和删除按钮 */}
-            {editable && (
-              <div className="absolute inset-0 bg-black/40 transition-opacity flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-                <GripVertical className="w-5 h-5 text-white/80 cursor-grab" />
-                <button
-                  onClick={(e) => handleDeleteClick(e, index)}
-                  className="p-1.5 bg-red-500 hover:bg-red-600 rounded-full transition-colors"
-                  title="删除图片"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-white" />
-                </button>
+                {/* 选中指示器 */}
+                {selectedIndex === index && (
+                  <div className="absolute inset-0 bg-blue-500/10 pointer-events-none" />
+                )}
+
+                {/* 拖拽手柄和删除按钮 */}
+                {editable && (
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent transition-opacity flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                    <div className="flex items-center gap-2">
+                      <GripVertical className="w-4 h-4 text-white/90 cursor-grab" />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteClick(e, index);
+                        }}
+                        className="p-1.5 bg-red-500 hover:bg-red-600 rounded-lg transition-all shadow-lg hover:scale-110"
+                        title="删除图片"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-white" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 序号标记 */}
+                <div className="absolute top-2 left-2 w-6 h-6 bg-black/70 backdrop-blur-sm rounded-lg text-white text-xs flex items-center justify-center font-bold shadow-md">
+                  {index + 1}
+                </div>
               </div>
-            )}
 
-            {/* 序号标记 */}
-            <div className="absolute top-1 left-1 w-5 h-5 bg-black/60 rounded text-white text-xs flex items-center justify-center font-medium">
-              {index + 1}
+              {/* 复制链接按钮（显示在图片下方） */}
+              {showLinks && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCopyLink(img, index);
+                  }}
+                  className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-all ${
+                    copiedIndex === index
+                      ? 'bg-green-100 text-green-700 border border-green-300'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                  }`}
+                  title="复制图片链接"
+                >
+                  {copiedIndex === index ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>已复制</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>复制链接</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -188,21 +268,21 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className={`w-20 h-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center transition-colors ${
+            className={`w-24 h-24 sm:w-28 sm:h-28 rounded-xl border-2 border-dashed flex flex-col items-center justify-center transition-all shadow-sm ${
               uploading
-                ? 'border-blue-300 bg-blue-50 text-blue-400 cursor-wait'
-                : 'border-gray-300 hover:border-gray-400 text-gray-400 hover:text-gray-500'
+                ? 'border-blue-400 bg-blue-50 text-blue-500 cursor-wait'
+                : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50 text-gray-400 hover:text-blue-500 hover:shadow-md hover:scale-105'
             }`}
           >
             {uploading ? (
               <>
                 <Loader2 className="w-6 h-6 animate-spin" />
-                <span className="text-xs mt-1">上传中</span>
+                <span className="text-xs mt-1.5 font-medium">上传中</span>
               </>
             ) : (
               <>
                 <Plus className="w-6 h-6" />
-                <span className="text-xs mt-1">添加</span>
+                <span className="text-xs mt-1.5 font-medium">添加</span>
               </>
             )}
           </button>
@@ -220,14 +300,30 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
 
       {/* 上传错误提示 */}
       {uploadError && (
-        <div className="mt-2 text-xs text-red-500 text-center bg-red-50 rounded-lg p-2">
+        <div className="mt-3 p-3 text-xs text-red-600 text-center bg-red-50 border border-red-200 rounded-lg shadow-sm">
           {uploadError}
         </div>
       )}
 
-      {/* 图片数量提示 */}
-      <div className="mt-3 text-xs text-gray-500 text-center">
-        共 {images.length} 张图片 {editable && '· 拖拽可排序'}
+      {/* 图片数量提示和 AI 按钮 */}
+      <div className="mt-4 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-gray-600 font-medium">
+            共 <span className="text-gray-900 font-semibold">{images.length}</span> 张图片
+            {editable && <span className="text-gray-400 mx-1">·</span>}
+            {editable && <span className="text-gray-500">拖拽可排序</span>}
+          </div>
+          {/* 移动端 AI 按钮 */}
+          {showAIButton && editable && images.length > 0 && (
+            <button
+              onClick={() => setAiModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg text-xs font-medium hover:from-purple-700 hover:to-indigo-700 transition-all lg:hidden"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              AI 处理
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Lightbox 弹窗预览 */}
@@ -237,6 +333,17 @@ export function ImageGallery({ images, onChange, editable = true }: ImageGallery
           currentIndex={selectedIndex}
           onClose={() => setLightboxOpen(false)}
           onNavigate={setSelectedIndex}
+        />
+      )}
+
+      {/* AI 图片处理弹窗 */}
+      {aiModalOpen && images.length > 0 && (
+        <AIImageModal
+          sku={sku}
+          images={images}
+          initialIndex={selectedIndex}
+          onClose={() => setAiModalOpen(false)}
+          onUpdateImages={onChange}
         />
       )}
 

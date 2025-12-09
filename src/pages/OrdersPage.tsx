@@ -1,24 +1,18 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, ChevronDown } from 'lucide-react';
-import { getOrders, syncOrders, subscribeToOrders, formatCurrency, formatDate, getSiteLabel, type OrderQueryResult } from '../lib/orders';
+import { syncOrders, formatCurrency, formatDate, getSiteLabel } from '../lib/orders';
 import { ORDER_STATUS_CONFIG, type Order, type OrderStatus, type SiteKey, type OrderSyncResult } from '../lib/types';
 import { OrderDetailModal } from '../components/OrderDetailModal';
 import { DateRangePicker } from '../components/DateRangePicker';
 import { useAuth } from '../lib/auth';
+import { useOrders, useOrdersRealtime } from '../hooks/useOrders';
 
 const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr'];
 const ALL_STATUSES: OrderStatus[] = ['pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed'];
 
 export function OrdersPage() {
   const { isAdmin } = useAuth();
-
-  // 数据状态
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
 
   // 日期工具函数
   const getToday = () => new Date().toISOString().split('T')[0];
@@ -38,9 +32,34 @@ export function OrdersPage() {
   const [showFilters, setShowFilters] = useState(false);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // React Query - 订单数据
+  const { 
+    data: ordersData, 
+    isLoading, 
+    error: ordersError,
+    refetch: refetchOrders
+  } = useOrders({
+    page,
+    sites: selectedSites.length > 0 ? selectedSites : undefined,
+    statuses: selectedStatuses.length > 0 ? selectedStatuses : undefined,
+    search: searchQuery || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  });
+
+  // Realtime 订阅
+  useOrdersRealtime();
+
+  // 从 React Query 数据中提取
+  const orders = ordersData?.orders || [];
+  const total = ordersData?.total || 0;
+  const totalPages = ordersData?.totalPages || 1;
+  const error = ordersError ? (ordersError as Error).message : null;
+
   // 同步状态
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResults, setSyncResults] = useState<OrderSyncResult[] | null>(null);
+  const [_syncError, setSyncError] = useState<string | null>(null);
 
   // 弹窗状态
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -57,56 +76,11 @@ export function OrdersPage() {
     }, 300);
   };
 
-  // 加载订单
-  const loadOrders = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      const result: OrderQueryResult = await getOrders({
-        sites: selectedSites.length > 0 ? selectedSites : undefined,
-        statuses: selectedStatuses.length > 0 ? selectedStatuses : undefined,
-        search: searchQuery || undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
-        page,
-        limit: 20,
-      });
-
-      setOrders(result.orders);
-      setTotal(result.total);
-      setTotalPages(result.totalPages);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载订单失败');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [page, searchQuery, selectedSites, selectedStatuses, dateFrom, dateTo]);
-
-  // 初始加载和筛选变化时重新加载
-  useEffect(() => {
-    loadOrders();
-  }, [loadOrders]);
-
-  // 实时订阅
-  useEffect(() => {
-    const channel = subscribeToOrders((payload) => {
-      console.log('订单变化:', payload.eventType, payload.new?.order_number);
-      // 刷新列表
-      loadOrders();
-    });
-
-    return () => {
-      channel.unsubscribe();
-    };
-  }, [loadOrders]);
-
   // 同步订单（默认只同步最近2天）
   const handleSync = async (site?: SiteKey, syncAll = false) => {
     try {
       setIsSyncing(true);
       setSyncResults(null);
-      setError(null);
 
       // 默认只同步最近2天的订单
       const after = syncAll ? undefined : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -115,9 +89,9 @@ export function OrdersPage() {
       const result = await syncOrders({ site, after });
       setSyncResults(result.results);
       // 刷新列表
-      await loadOrders();
+      await refetchOrders();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '同步失败');
+      setSyncError(err instanceof Error ? err.message : '同步失败');
     } finally {
       setIsSyncing(false);
     }
@@ -157,13 +131,13 @@ export function OrdersPage() {
   const hasFilters = selectedSites.length > 0 || selectedStatuses.length > 0 || dateFrom || dateTo || searchQuery;
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 固定头部区域 */}
-      <div className="sticky top-0 z-20 bg-gray-50 px-4 lg:px-6 pt-4 lg:pt-6 pb-4 space-y-4">
+    <div className="h-full flex flex-col overflow-auto">
+      {/* 头部区域 - 不再固定 */}
+      <div className="bg-gray-50 px-4 sm:px-6 pt-4 sm:pt-6 pb-4 sm:pb-6 space-y-4 sm:space-y-5">
         {/* 页面标题 */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-3">
+          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+            <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 flex-shrink-0" />
             <h1 className="text-lg sm:text-xl font-semibold text-gray-900">订单管理</h1>
             <span className="hidden sm:inline text-sm text-gray-500">（管理所有站点的订单）</span>
           </div>
@@ -173,7 +147,7 @@ export function OrdersPage() {
             <button
               onClick={() => handleSync(undefined, false)}
               disabled={isSyncing}
-              className="flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2.5 text-sm text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
             >
               {isSyncing ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -205,8 +179,8 @@ export function OrdersPage() {
         )}
 
         {/* 搜索和筛选栏 */}
-        <div className="bg-white rounded-xl shadow-sm border p-4">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
             {/* 搜索框 */}
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -215,14 +189,14 @@ export function OrdersPage() {
                 placeholder="搜索订单号、客户邮箱、姓名..."
                 value={searchInput}
                 onChange={(e) => handleSearchInput(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400"
+                className="w-full pl-10 pr-4 py-2.5 sm:py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400"
               />
             </div>
 
             {/* 筛选按钮 */}
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center justify-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 transition-colors ${hasFilters ? 'border-gray-900 text-gray-900' : 'border-gray-200'}`}
+              className={`flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 border rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap ${hasFilters ? 'border-gray-900 text-gray-900' : 'border-gray-200'}`}
             >
               <Filter className="w-4 h-4" />
               筛选
@@ -237,7 +211,7 @@ export function OrdersPage() {
             {hasFilters && (
               <button
                 onClick={clearFilters}
-                className="text-sm text-gray-500 hover:text-gray-700"
+                className="text-sm text-gray-500 hover:text-gray-700 whitespace-nowrap"
               >
                 清除
               </button>
@@ -246,7 +220,7 @@ export function OrdersPage() {
 
           {/* 展开的筛选面板 */}
           {showFilters && (
-            <div className="mt-4 pt-4 border-t grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="mt-4 sm:mt-5 pt-4 sm:pt-5 border-t grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
               {/* 站点筛选 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">站点</label>
@@ -302,122 +276,124 @@ export function OrdersPage() {
       </div>
 
       {/* 可滚动内容区域 */}
-      <div className="flex-1 px-4 lg:px-6 pb-4 lg:pb-6 overflow-auto">
+      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6">
         {/* 订单统计 */}
-        <div className="mb-4 text-sm text-gray-500">
+        <div className="mb-4 sm:mb-5 text-sm sm:text-base text-gray-500">
           共 {total} 条订单
         </div>
 
         {/* 错误提示 */}
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600" />
-            <span className="text-sm text-red-700">{error}</span>
+          <div className="mb-4 sm:mb-5 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <span className="text-sm text-red-700 break-words">{error}</span>
           </div>
         )}
 
         {/* 订单列表 */}
-        <div className="bg-white rounded-xl shadow-sm border overflow-hidden overflow-x-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-            </div>
-          ) : orders.length === 0 ? (
-            <div className="text-center py-16 text-gray-500">
-              {hasFilters ? '没有符合条件的订单' : '暂无订单，点击同步按钮从 WooCommerce 获取订单'}
-            </div>
-          ) : (
-            <table className="w-full min-w-[900px]">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">订单号</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">站点</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">客户</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">商品</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">金额</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">支付方式</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase whitespace-nowrap">状态</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">创建时间</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {orders.map(order => (
-                  <tr
-                    key={order.id}
-                    onClick={() => setSelectedOrder(order)}
-                    className="hover:bg-gray-50 cursor-pointer transition-colors"
-                  >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm font-medium text-gray-900">
-                        #{order.order_number}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-gray-600">{getSiteLabel(order.site)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm">
-                        <div className="font-medium text-gray-900">{order.customer_name || '-'}</div>
-                        <div className="text-gray-500 text-xs">{order.customer_email || '-'}</div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-gray-600">
-                        {order.line_items.length} 件商品
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-medium text-gray-900">
-                        {formatCurrency(order.total, order.currency)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-gray-600">
-                        {order.payment_method_title || '-'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          order.status === 'completed' ? 'bg-green-100 text-green-800' :
-                          order.status === 'processing' ? 'bg-blue-100 text-blue-800' :
-                          order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                          order.status === 'on-hold' ? 'bg-orange-100 text-orange-800' :
-                          order.status === 'cancelled' ? 'bg-gray-100 text-gray-800' :
-                          order.status === 'refunded' ? 'bg-purple-100 text-purple-800' :
-                          'bg-red-100 text-red-800'
-                        }`}
-                      >
-                        {ORDER_STATUS_CONFIG[order.status]?.label || order.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {formatDate(order.date_created)}
-                    </td>
+        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div className="overflow-x-auto">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+              </div>
+            ) : orders.length === 0 ? (
+              <div className="text-center py-16 text-gray-500 px-4">
+                {hasFilters ? '没有符合条件的订单' : '暂无订单，点击同步按钮从 WooCommerce 获取订单'}
+              </div>
+            ) : (
+              <table className="w-full min-w-[900px]">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">订单号</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">站点</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">客户</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">商品</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">金额</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">支付方式</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-center text-xs font-medium text-gray-500 uppercase whitespace-nowrap">状态</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">创建时间</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {orders.map(order => (
+                    <tr
+                      key={order.id}
+                      onClick={() => setSelectedOrder(order)}
+                      className="hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <td className="px-4 sm:px-5 py-3 sm:py-4">
+                        <span className="font-mono text-sm sm:text-base font-medium text-gray-900">
+                          #{order.order_number}
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4">
+                        <span className="text-sm sm:text-base text-gray-600">{getSiteLabel(order.site)}</span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4">
+                        <div className="text-sm sm:text-base">
+                          <div className="font-medium text-gray-900">{order.customer_name || '-'}</div>
+                          <div className="text-gray-500 text-xs sm:text-sm mt-0.5">{order.customer_email || '-'}</div>
+                        </div>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4">
+                        <span className="text-sm sm:text-base text-gray-600">
+                          {order.line_items.length} 件商品
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4 text-right">
+                        <span className="font-medium text-sm sm:text-base text-gray-900">
+                          {formatCurrency(order.total, order.currency)}
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4">
+                        <span className="text-sm sm:text-base text-gray-600">
+                          {order.payment_method_title || '-'}
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4 text-center">
+                        <span
+                          className={`inline-flex items-center px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap ${
+                            order.status === 'completed' ? 'bg-green-100 text-green-800' :
+                            order.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                            order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                            order.status === 'on-hold' ? 'bg-orange-100 text-orange-800' :
+                            order.status === 'cancelled' ? 'bg-gray-100 text-gray-800' :
+                            order.status === 'refunded' ? 'bg-purple-100 text-purple-800' :
+                            'bg-red-100 text-red-800'
+                          }`}
+                        >
+                          {ORDER_STATUS_CONFIG[order.status]?.label || order.status}
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4 text-sm sm:text-base text-gray-500">
+                        {formatDate(order.date_created)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
         {/* 分页 */}
         {totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-center gap-2">
+          <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
             <button
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 sm:px-5 py-2 sm:py-2.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               上一页
             </button>
-            <span className="text-sm text-gray-600">
+            <span className="text-sm sm:text-base text-gray-600 px-2">
               第 {page} / {totalPages} 页
             </span>
             <button
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={page === totalPages}
-              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 sm:px-5 py-2 sm:py-2.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               下一页
             </button>
@@ -431,7 +407,7 @@ export function OrdersPage() {
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
           onStatusChange={async () => {
-            await loadOrders();
+            await refetchOrders();
           }}
         />
       )}

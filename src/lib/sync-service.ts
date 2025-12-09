@@ -1,5 +1,5 @@
 /**
- * 同步服务 - 通过 Edge Function 执行 WooCommerce 同步操作
+ * 同步服务 - 通过 GCP Cloud Function 执行 WooCommerce 同步操作
  */
 
 import type { SiteKey } from './types';
@@ -7,6 +7,9 @@ import { supabase } from './supabase';
 
 // 所有站点
 const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr'];
+
+// GCP Cloud Function URL
+const GCP_SYNC_URL = 'https://jerseysfever-full-sync-zw2y4q6kyq-as.a.run.app';
 
 // 同步进度回调
 export type SyncProgressCallback = (progress: {
@@ -18,7 +21,63 @@ export type SyncProgressCallback = (progress: {
   error?: string;
 }) => void;
 
-// 从单个站点同步（调用 Edge Function）
+// 同步进度数据类型
+export interface SyncProgress {
+  id: string;
+  status: 'idle' | 'running' | 'completed' | 'error';
+  site: string | null;
+  current: number;
+  total: number;
+  success: number;
+  failed: number;
+  message: string | null;
+  started_at: string | null;
+  updated_at: string;
+}
+
+// 订阅同步进度（Realtime）
+export function subscribeSyncProgress(
+  callback: (progress: SyncProgress) => void
+): () => void {
+  const channel = supabase
+    .channel('sync-progress')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sync_progress',
+        filter: 'id=eq.current',
+      },
+      (payload) => {
+        callback(payload.new as SyncProgress);
+      }
+    )
+    .subscribe();
+
+  // 返回取消订阅函数
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// 获取当前同步进度
+export async function getSyncProgress(): Promise<SyncProgress | null> {
+  const { data, error } = await supabase
+    .from('sync_progress')
+    .select('*')
+    .eq('id', 'current')
+    .single();
+
+  if (error) {
+    console.error('获取同步进度失败:', error);
+    return null;
+  }
+
+  return data;
+}
+
+// 从单个站点同步（调用 GCP Cloud Function）
 export async function syncAllFromSite(
   site: SiteKey,
   onProgress?: SyncProgressCallback
@@ -26,30 +85,33 @@ export async function syncAllFromSite(
   onProgress?.({ site, current: 0, total: 0, status: 'fetching' });
 
   try {
-    const { data, error } = await supabase.functions.invoke('woo-sync', {
-      body: {
-        action: 'sync-all',
-      },
+    const response = await fetch(GCP_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'sync-site',
+        site,
+      }),
     });
 
-    if (error) {
-      throw new Error(error.message);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    if (!data?.success) {
-      throw new Error(data?.error || '同步失败');
-    }
+    const data = await response.json();
 
-    const result = data.results?.[site] || { synced: 0, errors: 0 };
+    if (!data.success && data.error) {
+      throw new Error(data.error);
+    }
 
     onProgress?.({
       site,
-      current: result.synced,
-      total: result.synced,
+      current: data.success || 0,
+      total: data.total || 0,
       status: 'done',
     });
 
-    return result;
+    return { synced: data.success || 0, errors: data.failed || 0 };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     onProgress?.({
@@ -63,7 +125,8 @@ export async function syncAllFromSite(
   }
 }
 
-// 从所有站点同步（调用 Edge Function）
+// 从所有站点同步（调用 GCP Cloud Function）
+// 注意：这是一个长时间运行的操作，进度通过 Realtime 订阅获取
 export async function syncAllFromAllSites(
   onProgress?: SyncProgressCallback
 ): Promise<Record<SiteKey, { synced: number; errors: number }>> {
@@ -80,29 +143,36 @@ export async function syncAllFromAllSites(
   }
 
   try {
-    const { data, error } = await supabase.functions.invoke('woo-sync', {
-      body: {
-        action: 'sync-all',
-      },
+    const response = await fetch(GCP_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'full-sync',
+      }),
     });
 
-    if (error) {
-      throw new Error(error.message);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    if (!data?.success) {
-      throw new Error(data?.error || '同步失败');
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || '同步失败');
     }
 
     // 更新结果
     for (const site of ALL_SITES) {
       if (data.results?.[site]) {
-        results[site] = data.results[site];
+        results[site] = {
+          synced: data.results[site].success || 0,
+          errors: data.results[site].failed || 0,
+        };
       }
       onProgress?.({
         site,
         current: results[site].synced,
-        total: results[site].synced,
+        total: results[site].synced + results[site].errors,
         status: 'done',
       });
     }

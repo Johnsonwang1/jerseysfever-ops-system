@@ -159,7 +159,8 @@ function isSpecialSeason(season: string): boolean {
 // - Women: {Team} {Type} Jersey {Season} - Women
 // - Player Version: {Team} {Type} Jersey Player Version {Season}
 // - Long Sleeve: {Team} {Type} Long Sleeve Jersey {Season}
-// - Kit: Kids {Team} {Type} Jersey Kit {Season}
+// - Kit: {Team} {Type} Jersey Kit {Season} (适用于所有商品类型)
+// - Special Edition: {Team} Jersey {Season} (不包含 Type)
 export function generateProductTitle(info: {
   categories: string[];
   type: string;
@@ -177,18 +178,25 @@ export function generateProductTitle(info: {
 
   const parts: string[] = [];
   
-  // 判断是否是长袖
+  // 判断袖长类型
   const isLongSleeve = sleeve === 'Long Sleeve';
+  const isKit = sleeve === 'Kit';
   // Jersey 前面的修饰词
-  const jerseyType = isLongSleeve ? 'Long Sleeve Jersey' : 'Jersey';
+  const jerseyType = isLongSleeve ? 'Long Sleeve Jersey' : (isKit ? 'Jersey Kit' : 'Jersey');
+  
+  // Special Edition 不包含 type
+  const isSpecialEdition = version === 'Special Edition';
 
   // Retro 商品 (有具体年份)
   if (year || season === 'Retro') {
     parts.push('Retro');
     if (year) parts.push(year);
     parts.push(team);
-    parts.push(type);
+    if (!isSpecialEdition) parts.push(type);
     parts.push(jerseyType);
+    if (isSpecialEdition) {
+      parts.push('Special Edition');
+    }
   }
   // 特殊赛季（世界杯等）
   else if (isSpecialSeason(season)) {
@@ -196,7 +204,7 @@ export function generateProductTitle(info: {
       parts.push('Kids');
     }
     parts.push(team);
-    parts.push(type);
+    if (!isSpecialEdition) parts.push(type);
     parts.push(jerseyType);
     parts.push(season);  // World Cup 2026
     if (gender === "Women's") {
@@ -204,38 +212,43 @@ export function generateProductTitle(info: {
     }
     if (version === 'Player Version') {
       parts.push('- Player Version');
+    } else if (isSpecialEdition) {
+      parts.push('- Special Edition');
     }
   }
   // Kids 商品
   else if (gender === 'Kids') {
     parts.push('Kids');
     parts.push(team);
-    parts.push(type);
-    if (sleeve === 'Kit') {
-      parts.push('Jersey Kit');
-    } else {
-      parts.push(jerseyType);
+    if (!isSpecialEdition) parts.push(type);
+    parts.push(jerseyType);
+    if (isSpecialEdition) {
+      parts.push('Special Edition');
     }
     parts.push(season);
   }
   // Women 商品
   else if (gender === "Women's") {
     parts.push(team);
-    parts.push(type);
+    if (!isSpecialEdition) parts.push(type);
     parts.push(jerseyType);
-    parts.push(season);
     if (version === 'Player Version') {
-      parts.push('- Player Version');
+      parts.push('Player Version');
+    } else if (isSpecialEdition) {
+      parts.push('Special Edition');
     }
+    parts.push(season);
     parts.push('- Women');
   }
   // 普通商品 (Men's / Unisex)
   else {
     parts.push(team);
-    parts.push(type);
+    if (!isSpecialEdition) parts.push(type);
     parts.push(jerseyType);
     if (version === 'Player Version') {
       parts.push('Player Version');
+    } else if (isSpecialEdition) {
+      parts.push('Special Edition');
     }
     parts.push(season);
   }

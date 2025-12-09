@@ -4,7 +4,7 @@
  * 支持多草稿并行 AI 生成和发布
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Upload, Loader2, Sparkles, Send, Trash2, GripVertical, X, Plus, ChevronDown, ChevronUp, Check, AlertCircle, Link, Clipboard } from 'lucide-react';
 import {
   DndContext,
@@ -154,6 +154,10 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [expandedSite, setExpandedSite] = useState<SiteKey | null>(null);
   const [selectedModel, setSelectedModel] = useState<GeminiModel>(getGeminiModel());
   
+  // 使用 ref 存储最新的 drafts 状态，确保异步操作中能获取最新值
+  const draftsRef = useRef<ProductDraft[]>([]);
+  draftsRef.current = drafts;
+  
   // 图片上传相关状态
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
@@ -229,7 +233,25 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
 
   // 更新草稿
   const handleUpdateDraft = useCallback((updated: ProductDraft) => {
-    setDrafts(prev => prev.map(d => d.id === updated.id ? updated : d));
+    // 检查关键属性是否改变（version, season, type, gender, sleeve）
+    // 如果改变且已有 AI 生成内容，清除旧内容提示重新生成
+    setDrafts(prev => {
+      const oldDraft = prev.find(d => d.id === updated.id);
+      if (oldDraft && Object.keys(oldDraft.content).length > 0) {
+        const keyFieldsChanged = 
+          oldDraft.info.version !== updated.info.version ||
+          oldDraft.info.season !== updated.info.season ||
+          oldDraft.info.type !== updated.info.type ||
+          oldDraft.info.gender !== updated.info.gender ||
+          oldDraft.info.sleeve !== updated.info.sleeve;
+        
+        // 如果关键属性改变，清除旧内容
+        if (keyFieldsChanged) {
+          updated.content = {};
+        }
+      }
+      return prev.map(d => d.id === updated.id ? updated : d);
+    });
     debouncedSaveDraft(updated);
   }, []);
 
@@ -237,17 +259,22 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const handleDeleteDraft = useCallback(async (id: string) => {
     const success = await deleteDraft(id);
     if (success) {
-      setDrafts(prev => prev.filter(d => d.id !== id));
+      setDrafts(prev => {
+        const filtered = prev.filter(d => d.id !== id);
+        // 如果删除的是当前选中的草稿，切换到其他草稿
+        if (selectedDraftId === id) {
+          // 优先选择第一个草稿，如果列表为空则设为 null
+          setSelectedDraftId(filtered.length > 0 ? filtered[0].id : null);
+        }
+        return filtered;
+      });
       setDraftStatuses(prev => {
         const newStatuses = { ...prev };
         delete newStatuses[id];
         return newStatuses;
       });
-      if (selectedDraftId === id) {
-        setSelectedDraftId(drafts.find(d => d.id !== id)?.id || null);
-      }
     }
-  }, [selectedDraftId, drafts]);
+  }, [selectedDraftId]);
 
   // 添加图片
   const handleAddImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -515,13 +542,15 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
     const targetId = draftId || selectedDraftId;
     if (!targetId) return;
     
-    const draft = drafts.find(d => d.id === targetId);
-    if (!draft || draft.images.length === 0) {
+    // 使用 ref 获取最新的草稿状态（确保获取到用户最新修改的属性）
+    const latestDraft = draftsRef.current.find(d => d.id === targetId);
+    
+    if (!latestDraft || latestDraft.images.length === 0) {
       alert('请先上传图片');
       return;
     }
 
-    const team = getTeamFromCategories(draft.info.categories);
+    const team = getTeamFromCategories(latestDraft.info.categories);
     if (!team) {
       alert('请先选择球队分类');
       return;
@@ -530,42 +559,50 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
     updateDraftStatus(targetId, { isGenerating: true, error: undefined });
 
     try {
-      const imageBase64 = await getImageBase64(draft.images[0]);
+      const imageBase64 = await getImageBase64(latestDraft.images[0]);
       if (!imageBase64) {
         throw new Error('图片数据不可用');
       }
 
+      // 使用最新的草稿信息生成属性（确保使用最新的 version、season 等）
       const attributes = {
         team,
-        season: draft.info.season,
-        type: draft.info.type,
-        version: draft.info.version,
-        gender: draft.info.gender,
-        sleeve: draft.info.sleeve,
-        events: draft.info.events,
+        season: latestDraft.info.season,
+        type: latestDraft.info.type,
+        version: latestDraft.info.version,
+        gender: latestDraft.info.gender,
+        sleeve: latestDraft.info.sleeve,
+        events: latestDraft.info.events,
       };
 
-      const generatedTitle = generateProductTitle(draft.info);
+      // 使用最新的草稿信息生成标题（确保标题包含最新的 version）
+      const generatedTitle = generateProductTitle(latestDraft.info);
+      
+      console.log('AI 生成参数:', {
+        version: latestDraft.info.version,
+        season: latestDraft.info.season,
+        type: latestDraft.info.type,
+        generatedTitle,
+      });
 
       const results = await Promise.all(
-        draft.selectedSites.map(site =>
+        latestDraft.selectedSites.map(site =>
           generateProductContent(imageBase64, site, attributes, generatedTitle)
         )
       );
 
-      const newContent: Partial<Record<SiteKey, ProductContent>> = { ...draft.content };
-      results.forEach((content, index) => {
-        newContent[draft.selectedSites[index]] = content;
-      });
-
-      // 更新草稿（需要重新获取最新的草稿状态）
-      setDrafts(prev => prev.map(d => 
-        d.id === targetId ? { ...d, content: newContent } : d
-      ));
-      
-      // 保存到数据库
-      const updatedDraft = { ...draft, content: newContent };
-      debouncedSaveDraft(updatedDraft);
+      // 更新草稿（再次从 ref 获取最新状态，保留其他站点的内容）
+      const currentDraft = draftsRef.current.find(d => d.id === targetId);
+      if (currentDraft) {
+        const newContent: Partial<Record<SiteKey, ProductContent>> = { ...currentDraft.content };
+        results.forEach((content, index) => {
+          newContent[latestDraft.selectedSites[index]] = content;
+        });
+        
+        const updatedDraft = { ...currentDraft, content: newContent };
+        setDrafts(prev => prev.map(d => d.id === targetId ? updatedDraft : d));
+        debouncedSaveDraft(updatedDraft);
+      }
       
     } catch (error) {
       console.error('AI 生成失败:', error);
@@ -630,6 +667,9 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
 
       if (result.results.every(r => r.success)) {
         // 全部成功，延迟删除草稿
+        // handleDeleteDraft 会自动处理选中草稿的切换：
+        // - 如果删除的是当前选中的草稿，会自动切换到其他草稿
+        // - 如果用户已经切换到其他草稿，则保持当前选中的草稿不变
         setTimeout(async () => {
           await handleDeleteDraft(targetId);
         }, 2000);

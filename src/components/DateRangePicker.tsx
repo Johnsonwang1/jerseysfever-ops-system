@@ -11,11 +11,6 @@ interface DateRangePickerProps {
 // 默认的日期快捷选项
 const getDefaultPresets = () => {
   const getToday = () => new Date().toISOString().split('T')[0];
-  const getTomorrow = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
-  };
   const getYesterday = () => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
@@ -32,11 +27,11 @@ const getDefaultPresets = () => {
   };
 
   return [
-    { label: '今天', from: getToday(), to: getTomorrow() },
-    { label: '昨天', from: getYesterday(), to: getToday() },
-    { label: '近7天', from: getDaysAgo(7), to: getTomorrow() },
-    { label: '近30天', from: getDaysAgo(30), to: getTomorrow() },
-    { label: '本月', from: getMonthStart(), to: getTomorrow() },
+    { label: '今天', from: getToday(), to: getToday() },
+    { label: '昨天', from: getYesterday(), to: getYesterday() },
+    { label: '近7天', from: getDaysAgo(6), to: getToday() },
+    { label: '近30天', from: getDaysAgo(29), to: getToday() },
+    { label: '本月', from: getMonthStart(), to: getToday() },
     { label: '全部', from: '', to: '' },
   ];
 };

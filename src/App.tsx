@@ -4,12 +4,14 @@ import { Layout } from './components/Layout';
 import { SyncIndicator } from './components/SyncToast';
 import { AuthProvider, useAuth } from './lib/auth';
 import { Loader2 } from 'lucide-react';
+import { Toaster } from '@/components/ui/sonner';
 
 // 懒加载页面组件
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then(m => ({ default: m.ProductsPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then(m => ({ default: m.UsersPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 
 // 受保护的路由组件 - 简化版
@@ -64,6 +66,7 @@ function AppRoutes() {
           <Route path="orders" element={<OrdersPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
 
         {/* 未匹配路由重定向到首页 */}
@@ -80,6 +83,8 @@ function App() {
         <AppRoutes />
         {/* 全局同步状态指示器 */}
         <SyncIndicator />
+        {/* shadcn/ui Toast */}
+        <Toaster position="top-right" richColors />
       </BrowserRouter>
     </AuthProvider>
   );

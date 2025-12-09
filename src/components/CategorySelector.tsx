@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, Search, Loader2, X, Check } from 'lucide-react';
 import type { WooCategory } from '../lib/types';
-import { getCategoriesFromDb } from '../lib/supabase';
+import { useCategories } from '../hooks/useProducts';
 
 interface CategorySelectorProps {
   value: string[];
@@ -16,28 +16,11 @@ interface CategoryGroup {
 export function CategorySelector({ value, onChange }: CategorySelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [categories, setCategories] = useState<WooCategory[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: categories = [], isLoading: loading, isError } = useCategories('com');
+  const error = isError ? '加载分类失败' : null;
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // 加载分类数据（从 Supabase 数据库）
-  useEffect(() => {
-    getCategoriesFromDb('com')
-      .then((data) => {
-        // 过滤掉 Uncategorized（getCategoriesFromDb 已返回 WooCategory 格式）
-        const filtered = data.filter((c) => c.name !== 'Uncategorized');
-        setCategories(filtered);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch categories:', err);
-        setError('加载分类失败');
-        setLoading(false);
-      });
-  }, []);
 
   // 点击外部关闭
   useEffect(() => {

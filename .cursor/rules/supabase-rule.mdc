@@ -1,9 +1,6 @@
 ---
-description: When the application needs to connect or deploy Supabase tables, edge functions, or storage, it is necessary to read this connection guide.
-alwaysApply: false
+alwaysApply: true
 ---
-
-
 # Supabase 操作流程
 
 ## 项目信息

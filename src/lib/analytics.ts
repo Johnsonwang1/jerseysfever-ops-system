@@ -18,12 +18,16 @@ export interface AnalyticsParams {
 export async function getAnalytics(params: AnalyticsParams): Promise<AnalyticsData> {
   const { dateFrom, dateTo, sites } = params;
 
+  // 处理日期范围 - 确保包含整天
+  // dateTo 需要加上 23:59:59.999 来包含当天所有订单
+  const dateToEnd = dateTo ? `${dateTo}T23:59:59.999Z` : '';
+
   // 构建查询
   let query = supabase
     .from('orders')
     .select('*')
     .gte('date_created', dateFrom)
-    .lte('date_created', dateTo);
+    .lte('date_created', dateToEnd);
 
   if (sites && sites.length > 0) {
     query = query.in('site', sites);
@@ -106,12 +110,15 @@ export async function getAnalytics(params: AnalyticsParams): Promise<AnalyticsDa
 export async function getProductRanking(params: AnalyticsParams & { limit?: number }): Promise<ProductStat[]> {
   const { dateFrom, dateTo, sites, limit = 50 } = params;
 
+  // 处理日期范围 - 确保包含整天
+  const dateToEnd = dateTo ? `${dateTo}T23:59:59.999Z` : '';
+
   // 构建查询
   let query = supabase
     .from('orders')
     .select('status, line_items')
     .gte('date_created', dateFrom)
-    .lte('date_created', dateTo);
+    .lte('date_created', dateToEnd);
 
   if (sites && sites.length > 0) {
     query = query.in('site', sites);

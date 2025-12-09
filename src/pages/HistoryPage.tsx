@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
 import { Clock, Loader2, AlertCircle, ExternalLink, RefreshCw, Check, X } from 'lucide-react';
-import { getPublishHistory, type PublishRecord, type SiteResult } from '../lib/history';
+import { type SiteResult, type PublishRecord } from '../lib/history';
 import type { SiteKey } from '../lib/types';
+import { usePublishHistory } from '../hooks/useHistory';
 
 const SITE_LABELS: Record<SiteKey, string> = {
   com: '.com',
@@ -11,26 +11,8 @@ const SITE_LABELS: Record<SiteKey, string> = {
 };
 
 export function HistoryPage() {
-  const [records, setRecords] = useState<PublishRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
-  const loadHistory = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getPublishHistory();
-      setRecords(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载发布历史失败');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const { data: records = [], isLoading, error: historyError, refetch: loadHistory } = usePublishHistory();
+  const error = historyError ? (historyError as Error).message : null;
 
   // 按日期分组
   const groupedByDate = records.reduce((acc, record) => {
@@ -87,7 +69,7 @@ export function HistoryPage() {
           <h1 className="text-xl font-semibold">发布历史</h1>
         </div>
         <button
-          onClick={loadHistory}
+          onClick={() => loadHistory()}
           disabled={isLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
         >
@@ -106,7 +88,7 @@ export function HistoryPage() {
           <AlertCircle className="w-12 h-12 mb-4" />
           <p>{error}</p>
           <button
-            onClick={loadHistory}
+            onClick={() => loadHistory()}
             className="mt-4 px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg"
           >
             重试
@@ -162,12 +144,12 @@ export function HistoryPage() {
                       {/* 操作按钮 */}
                       <div className="flex-shrink-0">
                         {Object.entries(record.sites).some(
-                          ([, result]) => result.success && result.permalink
+                          ([, result]) => (result as SiteResult).success && (result as SiteResult).permalink
                         ) && (
                           <a
                             href={
                               Object.values(record.sites).find(
-                                (r) => r.success && r.permalink
+                                (r) => (r as SiteResult).success && (r as SiteResult).permalink
                               )?.permalink
                             }
                             target="_blank"

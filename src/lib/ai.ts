@@ -98,8 +98,8 @@ export async function generateProductContent(
 ): Promise<ProductContent> {
   const language = SITE_LANGUAGE_MAP[site];
   
-  // 生成缓存 key（基于属性和语言）
-  const cacheKey = `${language}-${attributes.team}-${attributes.season}-${attributes.type}`;
+  // 生成缓存 key（基于属性和语言，包含所有关键属性）
+  const cacheKey = `${language}-${attributes.team}-${attributes.season}-${attributes.type}-${attributes.version}-${attributes.gender}-${attributes.sleeve}`;
   
   // 英文内容缓存（com 和 uk 共用）
   if (language === 'en' && contentCache.has(cacheKey)) {

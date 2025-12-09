@@ -65,11 +65,33 @@ export interface LocalProduct {
   // 发布时间（WooCommerce，取主站 .com 的发布时间）
   published_at?: string;
 
+  // 各站点变体信息
+  variations?: Partial<Record<SiteKey, ProductVariationInfo[]>>;
+  // 结构: { com: [{id, sku, ...}], de: [{id, sku, ...}], ... }
+  
+  // 各站点变体数量
+  variation_counts?: Partial<Record<SiteKey, number>>;
+  // 结构: { com: 5, de: 5, ... }
+
   // 时间戳
   created_at: string;
   updated_at: string;
   last_synced_at: string | null;
 }
+
+// 变体信息类型
+export interface ProductVariationInfo {
+  id: number;
+  sku: string;
+  attributes: { name: string; option: string }[];
+  regular_price: string;
+  sale_price: string;
+  stock_quantity: number | null;
+  stock_status: string;
+}
+
+// 变体问题筛选类型
+export type VariationFilter = 'var_zero' | 'var_one' | 'var_sku_mismatch';
 
 // 分页查询参数
 export interface ProductQueryParams {
@@ -81,6 +103,7 @@ export interface ProductQueryParams {
   excludeMode?: boolean; // 排除模式：筛选不在这些类目的商品
   site?: SiteKey; // 筛选特定站点同步状态
   status?: 'synced' | 'error' | 'pending';
+  variationFilter?: VariationFilter; // 变体问题筛选
 }
 
 // 分页查询结果
@@ -92,8 +115,16 @@ export interface ProductQueryResult {
 
 // 获取商品列表（从本地 Supabase 表）
 export async function getLocalProducts(params: ProductQueryParams = {}): Promise<ProductQueryResult> {
-  const { page = 1, perPage = 20, search, categories, categoryMode = 'or', excludeMode = false, site, status } = params;
+  const { page = 1, perPage = 20, search, categories, categoryMode = 'or', excludeMode = false, site, status, variationFilter } = params;
   const offset = (page - 1) * perPage;
+
+  // 如果是 SKU 不匹配筛选，先获取不匹配的 SKU 列表
+  let skuMismatchList: string[] = [];
+  if (variationFilter === 'var_sku_mismatch') {
+    const { data: mismatchData } = await supabase.rpc('get_sku_mismatch_products');
+    skuMismatchList = mismatchData?.map((r: { sku: string }) => r.sku) || [];
+    console.log('📋 SKU 不匹配商品数量:', skuMismatchList.length);
+  }
 
   let query = supabase
     .from('products')
@@ -131,6 +162,23 @@ export async function getLocalProducts(params: ProductQueryParams = {}): Promise
   } else if (site) {
     // 只筛选该站点存在的（不是 not_published）
     query = query.neq(`sync_status->>${site}`, 'not_published');
+  }
+
+  // 变体问题筛选（只筛选已发布到 com 的商品）
+  if (variationFilter) {
+    // 确保商品已发布到 com
+    query = query.not('woo_ids->com', 'is', null);
+    
+    if (variationFilter === 'var_zero') {
+      // 0 个变体：variation_counts->com 为 0 或不存在
+      query = query.or('variation_counts->com.is.null,variation_counts->com.eq.0');
+    } else if (variationFilter === 'var_one') {
+      // 仅 1 个变体
+      query = query.eq('variation_counts->com', 1);
+    } else if (variationFilter === 'var_sku_mismatch' && skuMismatchList.length > 0) {
+      // SKU 不匹配：使用预先获取的 SKU 列表筛选
+      query = query.in('sku', skuMismatchList);
+    }
   }
 
   // 排序和分页（按 WooCommerce 发布时间倒序，无发布时间的排最后）
@@ -361,6 +409,15 @@ export async function updateProductDetails(
     name?: string;
     images?: string[];
     categories?: string[];
+    attributes?: {
+      team?: string;
+      season?: string;
+      type?: string;
+      version?: string;
+      gender?: string;
+      sleeve?: string;
+      events?: string[];
+    };
     prices?: Partial<Record<SiteKey, number>>;
     regular_prices?: Partial<Record<SiteKey, number>>;
     stock_quantities?: Partial<Record<SiteKey, number>>;

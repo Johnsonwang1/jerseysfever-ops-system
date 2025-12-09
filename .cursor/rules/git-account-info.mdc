@@ -1,0 +1,150 @@
+---
+alwaysApply: true
+---
+# Git Account Configuration
+
+## 📋 Current Git Account
+
+**Global Configuration:**
+- **Username**: `Johnsonwang1`
+- **Email**: `Johnsonwang1@users.noreply.github.com`
+- **Remote Repository**: `https://github.com/Johnsonwang1/jerseysfever-ops-system.git`
+- **Personal Access Token**: `YOUR_TOKEN_HERE` (请从本地环境变量或安全存储中获取)
+
+---
+
+## ✅ Verify Git Account Before Commits
+
+**Always check git account before committing:**
+
+```bash
+# Check current git user name
+git config user.name
+
+# Check current git user email
+git config user.email
+
+# Check remote repository
+git remote -v
+
+# View all git config (including origin)
+git config --list --show-origin | grep -E "(user\.|remote\.)"
+```
+
+---
+
+## 🔧 Set Correct Git Account
+
+### For This Project Only (Recommended)
+
+```bash
+# Set project-specific git user
+git config user.name "Johnsonwang1"
+git config user.email "Johnsonwang1@users.noreply.github.com"
+
+# Verify
+git config user.name
+git config user.email
+```
+
+### Global Configuration (All Projects)
+
+```bash
+# Set global git user
+git config --global user.name "Johnsonwang1"
+git config --global user.email "Johnsonwang1@users.noreply.github.com"
+
+# Verify
+git config --global user.name
+git config --global user.email
+```
+
+### GitHub Authentication (Personal Access Token)
+
+**推荐方式：使用 Personal Access Token（无需用户账号登录）**
+
+```bash
+# 方式 1: 使用 GitHub CLI
+gh auth login --with-token < token.txt
+# 或者直接输入 Token
+echo "YOUR_TOKEN" | gh auth login --with-token
+
+# 方式 2: 使用 Git Credential Helper
+git config --global credential.helper store
+# 首次 push 时输入用户名和 Token（密码处输入 Token）
+
+# 方式 3: 在 URL 中直接使用 Token
+git remote set-url origin https://YOUR_TOKEN@github.com/Johnsonwang1/jerseysfever-ops-system.git
+```
+
+**生成 Token：**
+1. 访问：https://github.com/settings/tokens/new
+2. 选择 "Tokens (classic)"
+3. Note: "JerseysFever Ops System"
+4. Expiration: 90 days 或 1 year
+5. Scopes: 勾选 `repo` (Full control)
+6. Generate token 并复制（格式：`ghp_xxxxxxxxxxxxx`）
+
+**当前使用的 Token：**
+- Token: 请从本地环境变量或安全存储中获取（格式：`ghp_xxxxxxxxxxxxx`）
+
+**使用 Token 的优势：**
+- ✅ 不需要用户账号登录
+- ✅ 可以设置过期时间
+- ✅ 可以撤销，更安全
+- ✅ 适合自动化和 CI/CD
+
+**重要说明：Token 与提交记录的关系**
+- 🔐 **Token**：用于认证，决定"能否推送代码"
+- 👤 **git config user.name/email**：决定"提交记录显示谁"
+- 📝 **提交记录**：GitHub 上会显示 `git config` 配置的作者信息
+- ✅ **可以追踪**：即使使用 Token，提交记录仍会显示配置的用户名和邮箱
+- 📊 **查看提交记录**：`git log` 或 GitHub 上都能看到作者信息
+
+**示例：**
+```bash
+# 当前配置
+git config user.name  # Johnsonwang1
+git config user.email # Johnsonwang1@users.noreply.github.com
+
+# 提交记录会显示：
+# Author: Johnsonwang1 <Johnsonwang1@users.noreply.github.com>
+```
+
+---
+
+## ⚠️ Important Rules
+
+### ✅ DO:
+- **Always verify** git account before committing
+- Use project-specific config if working with multiple accounts
+- Use GitHub noreply email format for privacy: `username@users.noreply.github.com`
+- Check `git remote -v` to ensure correct repository
+
+### ❌ DON'T:
+- Never commit with wrong account (check before every commit)
+- Never use personal email if project requires organization account
+- Never commit sensitive credentials or access tokens
+
+---
+
+## 🔍 Quick Verification Commands
+
+```bash
+# Quick check before commit
+echo "Git User: $(git config user.name)"
+echo "Git Email: $(git config user.email)"
+echo "Remote: $(git remote get-url origin)"
+
+# Or use this one-liner
+git config user.name && git config user.email && git remote -v
+```
+
+---
+
+## 📝 Notes
+
+- Current account is configured for: `Johnsonwang1/jerseysfever-ops-system` (JerseysFever Ops System)
+- Email uses GitHub noreply format for privacy protection
+- If working with multiple projects/accounts, use project-specific config
+- Always verify account before pushing commits to avoid wrong attribution

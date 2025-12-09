@@ -1,0 +1,400 @@
+---
+alwaysApply: true
+---
+# GCP Cloud Functions Operations Guide
+
+## 📋 GCP Configuration
+
+**Project Details:**
+- **Project ID**: `snapnest-453114`
+- **Service Account**: `jerseysfever@snapnest-453114.iam.gserviceaccount.com`
+- **Service Account File**: `gcp-key/snapnest-453114-c1b3bb4db875.json` (本地文件，不提交到 Git)
+- **Client ID**: `113248339391559399839`
+
+**⚠️ 重要：Service Account 文件管理**
+- ✅ 文件保留在本地，用于 GCP 认证
+- ❌ 文件已添加到 `.gitignore`，不会提交到 Git
+- 🔐 如果文件丢失，需要从 GCP Console 重新下载
+
+---
+
+## 🔐 Authentication Setup
+
+### Set Service Account (Required Before Any Operations)
+
+```bash
+# Set environment variable
+export GOOGLE_APPLICATION_CREDENTIALS="gcp-key/snapnest-453114-c1b3bb4db875.json"
+
+# Activate service account
+gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+
+# Set project
+gcloud config set project snapnest-453114
+
+# Verify configuration
+gcloud config list
+```
+
+**Expected Output:**
+```
+[core]
+account = jerseysfever@snapnest-453114.iam.gserviceaccount.com
+project = snapnest-453114
+```
+
+---
+
+## ☁️ Cloud Functions Overview
+
+### Available Functions
+
+| Function Name | Region | Runtime | Status | Purpose |
+|--------------|--------|---------|--------|---------|
+| `snapnest-generative-flux` | asia-southeast1 | python312 | ACTIVE | Flux 图像生成 |
+| `snapnest-generative-gemini-image` | asia-southeast1 | python312 | ACTIVE | Gemini 图像生成 |
+| `snapnest-generative-gemini25-flash` | asia-southeast1 | python312 | ACTIVE | Gemini 2.5 Flash 图像生成 |
+| `snapnest-generative-imagen` | asia-southeast1 | python312 | ACTIVE | Imagen 图像生成 |
+| `snapnest-generative-storage` | asia-southeast1 | python312 | ACTIVE | 存储服务 |
+| `snapnest-generative-veo` | asia-southeast1 | python312 | ACTIVE | Veo 视频生成 |
+| `snapnest-professional-stitcher` | asia-southeast1 | python312 | ACTIVE | 专业拼接服务 |
+
+### Function URLs
+
+- **snapnest-generative-flux**: `https://snapnest-generative-flux-zw2y4q6kyq-as.a.run.app`
+- **snapnest-generative-gemini-image**: `https://snapnest-generative-gemini-image-zw2y4q6kyq-as.a.run.app`
+- **snapnest-generative-gemini25-flash**: `https://snapnest-generative-gemini25-flash-zw2y4q6kyq-as.a.run.app`
+- **snapnest-generative-imagen**: `https://snapnest-generative-imagen-zw2y4q6kyq-as.a.run.app`
+- **snapnest-generative-storage**: `https://snapnest-generative-storage-zw2y4q6kyq-as.a.run.app`
+- **snapnest-generative-veo**: `https://snapnest-generative-veo-zw2y4q6kyq-as.a.run.app`
+- **snapnest-professional-stitcher**: `https://snapnest-professional-stitcher-zw2y4q6kyq-as.a.run.app`
+
+---
+
+## 🚀 Deployment Operations
+
+### List All Functions
+
+```bash
+# List all functions
+gcloud functions list
+
+# List with details
+gcloud functions list --format="table(name,status,region,trigger.httpsTrigger.url)"
+
+# List functions in specific region
+gcloud functions list --regions=asia-southeast1
+gcloud functions list --regions=us-central1
+```
+
+### Get Function Information
+
+```bash
+# Get function details
+gcloud functions describe <function-name> --gen2 --region=<region>
+
+# Get function URL
+gcloud functions describe <function-name> --gen2 --region=<region> --format="value(serviceConfig.uri)"
+
+# Get function logs
+gcloud functions logs read <function-name> --gen2 --region=<region> --limit=50
+```
+
+### Deploy Function
+
+**Before deploying, ensure:**
+1. ✅ Service account is activated
+2. ✅ Correct project is set
+3. ✅ Required environment variables are set
+4. ✅ You're in the function directory
+
+**Deployment Steps:**
+
+```bash
+# 1. Navigate to function directory
+cd cloud-functions/<function-name>
+
+# 2. Set required environment variables (if needed)
+export GEMINI_API_KEY="your-key"
+export ALIYUN_ACCESS_KEY_ID="your-key"
+export ALIYUN_ACCESS_KEY_SECRET="your-secret"
+export ALIYUN_INSTANCE_NAME="your-instance"
+
+# 3. Run deployment script
+./deploy.sh
+
+# OR deploy manually
+gcloud functions deploy <function-name> \
+  --gen2 \
+  --region=<region> \
+  --runtime=<runtime> \
+  --entry-point=<entry-point> \
+  --trigger-http \
+  --allow-unauthenticated \
+  --memory=<memory> \
+  --timeout=<timeout> \
+  --set-env-vars="KEY=value" \
+  --source=.
+```
+
+### Function-Specific Deployment
+
+#### 1. snapnest-generative-gemini-image (Python)
+
+```bash
+cd cloud-functions/snapnest-generative-gemini-image
+
+# Required env vars (根据实际需要设置)
+export GEMINI_API_KEY="your-key"
+
+./deploy.sh
+```
+
+**Deployment Config:**
+- Region: `asia-southeast1`
+- Runtime: `python312`
+- Memory: `1Gi`
+- Timeout: `540s`
+- Max Instances: `100`
+
+#### 2. snapnest-generative-flux (Python)
+
+```bash
+cd cloud-functions/snapnest-generative-flux
+
+# Required env vars (根据实际需要设置)
+./deploy.sh
+```
+
+**Deployment Config:**
+- Region: `asia-southeast1`
+- Runtime: `python312`
+- Memory: `1024M`
+- Timeout: `540s`
+- Max Instances: `50`
+
+#### 3. snapnest-professional-stitcher (Python)
+
+```bash
+cd cloud-functions/snapnest-professional-stitcher
+
+# Required env vars (根据实际需要设置)
+./deploy.sh
+```
+
+**Deployment Config:**
+- Region: `asia-southeast1`
+- Runtime: `python312`
+- Memory: `512M`
+- Timeout: `60s`
+- Max Instances: `34`
+
+---
+
+## 📊 Monitoring & Debugging
+
+### View Function Logs
+
+```bash
+# View recent logs
+gcloud functions logs read <function-name> --gen2 --region=<region> --limit=50
+
+# Follow logs in real-time
+gcloud functions logs read <function-name> --gen2 --region=<region> --follow
+
+# Filter logs by severity
+gcloud functions logs read <function-name> --gen2 --region=<region> --severity=ERROR
+
+# View logs for specific time range
+gcloud functions logs read <function-name> --gen2 --region=<region> \
+  --start-time="2025-01-01T00:00:00Z" \
+  --end-time="2025-01-02T00:00:00Z"
+```
+
+### Test Function Locally
+
+```bash
+# For Node.js functions
+cd cloud-functions/<function-name>
+npm install
+node test-local.js
+
+# For Python functions
+cd cloud-functions/<function-name>
+pip install -r requirements.txt
+python test-local.py
+```
+
+### Check Function Status
+
+```bash
+# Get function status
+gcloud functions describe <function-name> --gen2 --region=<region> \
+  --format="value(state)"
+
+# Get function metrics
+gcloud functions describe <function-name> --gen2 --region=<region> \
+  --format="value(serviceConfig.availableMemory,serviceConfig.timeoutSeconds)"
+```
+
+---
+
+## 🔧 Common Operations
+
+### Update Function Configuration
+
+```bash
+# Update memory
+gcloud functions deploy <function-name> \
+  --gen2 \
+  --region=<region> \
+  --memory=4GB
+
+# Update timeout
+gcloud functions deploy <function-name> \
+  --gen2 \
+  --region=<region> \
+  --timeout=600s
+
+# Update max instances
+gcloud functions deploy <function-name> \
+  --gen2 \
+  --region=<region> \
+  --max-instances=20
+
+# Update environment variables
+gcloud functions deploy <function-name> \
+  --gen2 \
+  --region=<region> \
+  --update-env-vars="KEY1=value1,KEY2=value2"
+```
+
+### Delete Function
+
+```bash
+# Delete function
+gcloud functions delete <function-name> --gen2 --region=<region>
+
+# Delete with confirmation
+gcloud functions delete <function-name> --gen2 --region=<region> --quiet
+```
+
+### Invoke Function
+
+```bash
+# Invoke function via gcloud
+gcloud functions call <function-name> \
+  --gen2 \
+  --region=<region> \
+  --data='{"key":"value"}'
+
+# Or use curl
+curl -X POST \
+  https://<region>-snapnest-453114.cloudfunctions.net/<function-name> \
+  -H "Content-Type: application/json" \
+  -d '{"key":"value"}'
+```
+
+---
+
+## 📁 Project Structure
+
+```
+gcp-key/
+├── snapnest-453114-c1b3bb4db875.json       # Service account key
+│
+cloud-functions/                              # Cloud Functions 代码目录（如果存在）
+├── snapnest-generative-gemini-image/        # Gemini 图像生成
+│   ├── deploy.sh
+│   ├── main.py
+│   └── requirements.txt
+│
+├── snapnest-generative-flux/                 # Flux 图像生成
+│   ├── deploy.sh
+│   ├── main.py
+│   └── requirements.txt
+│
+├── snapnest-generative-gemini25-flash/       # Gemini 2.5 Flash
+│   └── ...
+│
+├── snapnest-generative-imagen/               # Imagen 图像生成
+│   └── ...
+│
+├── snapnest-generative-storage/              # 存储服务
+│   └── ...
+│
+├── snapnest-generative-veo/                  # Veo 视频生成
+│   └── ...
+│
+└── snapnest-professional-stitcher/           # 专业拼接服务
+    └── ...
+```
+
+---
+
+## ⚠️ Important Rules
+
+### ✅ DO:
+- **Always set** `GOOGLE_APPLICATION_CREDENTIALS` before operations
+- **Always verify** project is set to `snapnest-453114`
+- **Always check** function status before deployment
+- **Always test** functions locally before deploying
+- **Always check** logs after deployment
+- **Use deployment scripts** (`deploy.sh`) when available
+
+### ❌ DON'T:
+- Never use wrong project ID
+- Never commit service account key file
+- Never deploy without setting required environment variables
+- Never skip testing before deployment
+- Never delete functions without backup
+
+---
+
+## 🔍 Quick Reference
+
+### Essential Commands
+
+```bash
+# Setup
+export GOOGLE_APPLICATION_CREDENTIALS="gcp-key/snapnest-453114-c1b3bb4db875.json"
+gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+gcloud config set project snapnest-453114
+
+# List functions
+gcloud functions list
+
+# Deploy function
+cd cloud-functions/<function-name>
+./deploy.sh
+
+# View logs
+gcloud functions logs read <function-name> --gen2 --region=<region>
+
+# Get function URL
+gcloud functions describe <function-name> --gen2 --region=<region> \
+  --format="value(serviceConfig.uri)"
+```
+
+### Environment Variables
+
+**根据不同的函数，可能需要设置以下环境变量：**
+- `GEMINI_API_KEY` - Gemini API 密钥（用于 Gemini 相关函数）
+- 其他函数特定的环境变量（根据实际部署需要设置）
+
+---
+
+## 📝 Notes
+
+- **Service account file**: `gcp-key/snapnest-453114-c1b3bb4db875.json`
+  - ✅ 文件保留在本地，用于 GCP 认证
+  - ❌ 文件已添加到 `.gitignore`，不会提交到 Git（安全考虑）
+  - 🔐 如果文件丢失，需要从 GCP Console 重新下载：
+    1. 访问：https://console.cloud.google.com/iam-admin/serviceaccounts
+    2. 选择项目：`snapnest-453114`
+    3. 找到 Service Account：`jerseysfever@snapnest-453114.iam.gserviceaccount.com`
+    4. 点击 "Keys" → "Add Key" → "Create new key" → JSON
+- All functions use Gen2 (2nd generation)
+- Functions are deployed with `--allow-unauthenticated` (public access)
+- API documentation: `cloud-functions/API_DOCUMENTATION.md`
+- Always verify service account before operations: `gcloud config list`

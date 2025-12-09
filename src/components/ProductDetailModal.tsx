@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Save, Upload, Loader2, CheckCircle, XCircle, Clock, ExternalLink, Package, AlertCircle, Image, Edit2, Check } from 'lucide-react';
 import type { SiteKey } from '../lib/types';
 import type { LocalProduct } from '../lib/products';
-import { updateProductDetails, getAllCategories } from '../lib/products';
+import { updateProductDetails } from '../lib/products';
 import { syncProductToSites, type SyncResult, type SyncOptions } from '../lib/sync-api';
 import { ImageGallery } from './ImageGallery';
 import { SitePriceEditor } from './SitePriceEditor';
@@ -10,6 +10,8 @@ import { SiteContentEditor } from './SiteContentEditor';
 import { SITES } from '../lib/attributes';
 import { startSync, endSync } from './SyncToast';
 import { CategorySelector } from './products/CategorySelector';
+import { ATTRIBUTE_OPTIONS } from '../lib/attributes';
+import { useAllCategories } from '../hooks/useProducts';
 
 interface ProductDetailModalProps {
   product: LocalProduct;
@@ -39,7 +41,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
   const [isSyncing, _setIsSyncing] = useState(false);
   const [showSyncDialog, setShowSyncDialog] = useState(false);
   const [selectedSites, setSelectedSites] = useState<SiteKey[]>([]);
-  const [syncImages, setSyncImages] = useState(false);  // 是否同步图片（默认不同步）
+  const [syncImages, setSyncImages] = useState(true);  // 是否同步图片（默认同步）
   const [syncResults, _setSyncResults] = useState<SyncResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +50,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
     name: product.name,
     images: product.images || [],
     categories: product.categories || [],
+    attributes: product.attributes || {},
     prices: product.prices || {},
     regular_prices: product.regular_prices || {},
     stock_quantities: product.stock_quantities || {},
@@ -58,19 +61,21 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
 
   // 分类编辑状态
   const [isEditingCategories, setIsEditingCategories] = useState(false);
-  const [allCategories, setAllCategories] = useState<{ id: number; name: string; parent: number }[]>([]);
+  const { data: allCategories = [] } = useAllCategories();
   const [categoryMode, setCategoryMode] = useState<'and' | 'or'>('or');
 
-  // 加载所有分类（用于选择器）
-  useEffect(() => {
-    getAllCategories().then(setAllCategories).catch(console.error);
-  }, []);
+  // 属性编辑状态
+  const [isEditingAttributes, setIsEditingAttributes] = useState(false);
+
+  // 图片链接复制状态
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   // 检查是否有修改
   const hasChanges = JSON.stringify({
     name: product.name,
     images: product.images,
     categories: product.categories,
+    attributes: product.attributes,
     prices: product.prices,
     regular_prices: product.regular_prices,
     stock_quantities: product.stock_quantities,
@@ -103,6 +108,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
   };
 
   // 同步到站点（异步执行，立即关闭窗口）
+  // 分批同步避免超时：每批最多 2 个站点
   const handleSync = async () => {
     if (selectedSites.length === 0) return;
 
@@ -119,33 +125,66 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
       // 立即关闭窗口
       onClose();
       
-      // 后台异步执行同步（不等待结果）
-      // 使用 SKU 调用 Edge Function，而不是传递整个 product 对象
+      // 分批同步：每批最多 2 个站点（避免超时）
+      const BATCH_SIZE = 2;
       const sitesToSync = [...selectedSites];
       const syncOptions: SyncOptions = { syncImages };
-      syncProductToSites(updated.sku, sitesToSync, syncOptions)
-        .then((results) => {
-          const successCount = results.filter(r => r.success).length;
-          const failCount = results.length - successCount;
-          
-          // 结束同步（显示结果）
-          if (failCount === 0) {
-            endSync(true, '同步成功');
-          } else if (successCount === 0) {
-            endSync(false, results[0]?.error || '同步失败');
-          } else {
-            endSync(true, `${successCount}/${results.length} 成功`);
-          }
-          
-          console.log(`✅ 同步完成: ${successCount} 成功, ${failCount} 失败`);
-        })
-        .catch((err) => {
-          console.error('同步出错:', err);
-          endSync(false, err instanceof Error ? err.message : '同步出错');
-        });
+      const allResults: SyncResult[] = [];
+      
+      // 将站点分批
+      const batches: SiteKey[][] = [];
+      for (let i = 0; i < sitesToSync.length; i += BATCH_SIZE) {
+        batches.push(sitesToSync.slice(i, i + BATCH_SIZE));
+      }
+      
+      console.log(`🚀 分 ${batches.length} 批同步到 ${sitesToSync.length} 个站点`);
+      
+      // 串行执行每批（避免并行超时）
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        console.log(`📦 第 ${i + 1}/${batches.length} 批: ${batch.join(', ')}`);
+        
+        try {
+          const results = await syncProductToSites(updated.sku, batch, syncOptions);
+          allResults.push(...results);
+        } catch (err) {
+          console.error(`第 ${i + 1} 批同步失败:`, err);
+          // 添加失败结果
+          batch.forEach(site => {
+            allResults.push({
+              site,
+              success: false,
+              error: err instanceof Error ? err.message : '同步超时',
+            });
+          });
+        }
+      }
+      
+      const successCount = allResults.filter(r => r.success).length;
+      const failCount = allResults.length - successCount;
+      const failedResults = allResults.filter(r => !r.success);
+      
+      // 结束同步（显示结果 + 具体错误）
+      if (failCount === 0) {
+        endSync(true, '同步成功');
+      } else if (successCount === 0) {
+        // 全部失败 - 显示详细错误
+        const errorDetails = failedResults.map(r => `${r.site}: ${r.error}`).join('\n');
+        console.error('❌ 同步失败详情:\n', errorDetails);
+        endSync(false, `同步失败: ${failedResults[0]?.error || '未知错误'}`);
+      } else {
+        // 部分失败 - 显示哪些站点失败了
+        const failedSites = failedResults.map(r => r.site).join(', ');
+        const firstError = failedResults[0]?.error || '未知错误';
+        console.warn(`⚠️ 部分失败 (${failedSites}): ${firstError}`);
+        endSync(true, `${successCount}/${allResults.length} 成功，${failedSites} 失败: ${firstError}`);
+      }
+      
+      console.log(`✅ 同步完成: ${successCount} 成功, ${failCount} 失败`);
         
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
+      endSync(false, err instanceof Error ? err.message : '同步出错');
     }
   };
 
@@ -158,6 +197,17 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
         [site]: value,
       },
     }));
+  };
+
+  // 复制图片链接
+  const handleCopyImageLink = async (url: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
+    } catch (err) {
+      console.error('复制失败:', err);
+    }
   };
 
   // 渲染基础信息 Tab
@@ -188,7 +238,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
       {/* 各站点状态和库存 */}
       <div className="space-y-3">
         <label className="block text-sm font-medium text-gray-700">各站点状态与库存</label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {SITES.map((site) => {
             const siteStatus = editData.statuses[site.key] || 'publish';
             const siteStockQty = editData.stock_quantities[site.key] ?? 100;
@@ -205,12 +255,12 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                   <span className="text-sm font-medium">{site.name}</span>
                   {!hasWooId && <span className="text-xs text-gray-400">(未发布)</span>}
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                   <select
                     value={siteStatus}
                     onChange={(e) => updateSiteData(site.key, 'statuses', e.target.value)}
                     disabled={!hasWooId}
-                    className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-100"
+                    className="text-xs px-1.5 sm:px-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-100"
                     title="发布状态"
                   >
                     <option value="publish">已发布</option>
@@ -220,7 +270,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                     value={siteStockStatus}
                     onChange={(e) => updateSiteData(site.key, 'stock_statuses', e.target.value)}
                     disabled={!hasWooId}
-                    className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-100"
+                    className="text-xs px-1.5 sm:px-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-100"
                     title="库存状态"
                   >
                     <option value="instock">有库存</option>
@@ -232,7 +282,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                     onChange={(e) => updateSiteData(site.key, 'stock_quantities', parseInt(e.target.value) || 0)}
                     disabled={!hasWooId}
                     min="0"
-                    className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-100 w-full"
+                    className="text-xs px-1.5 sm:px-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-100 w-full"
                     title="库存数量"
                   />
                 </div>
@@ -242,41 +292,195 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
         </div>
       </div>
 
-      {/* 属性展示 */}
+      {/* 属性编辑 */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">商品属性</label>
-        <div className="flex flex-wrap gap-2">
-          {product.attributes?.team && (
-            <span className="px-2.5 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg">
-              球队: {product.attributes.team}
-            </span>
-          )}
-          {product.attributes?.season && (
-            <span className="px-2.5 py-1 text-sm bg-blue-50 text-blue-700 rounded-lg">
-              赛季: {product.attributes.season}
-            </span>
-          )}
-          {product.attributes?.type && (
-            <span className="px-2.5 py-1 text-sm bg-purple-50 text-purple-700 rounded-lg">
-              类型: {product.attributes.type}
-            </span>
-          )}
-          {product.attributes?.gender && (
-            <span className="px-2.5 py-1 text-sm bg-pink-50 text-pink-700 rounded-lg">
-              性别: {product.attributes.gender}
-            </span>
-          )}
-          {product.attributes?.version && (
-            <span className="px-2.5 py-1 text-sm bg-orange-50 text-orange-700 rounded-lg">
-              版本: {product.attributes.version}
-            </span>
-          )}
-          {product.attributes?.sleeve && (
-            <span className="px-2.5 py-1 text-sm bg-green-50 text-green-700 rounded-lg">
-              袖长: {product.attributes.sleeve}
-            </span>
-          )}
+        <div className="flex items-center justify-between">
+          <label className="block text-sm font-medium text-gray-700">商品属性</label>
+          <button
+            onClick={() => setIsEditingAttributes(!isEditingAttributes)}
+            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+          >
+            {isEditingAttributes ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                完成
+              </>
+            ) : (
+              <>
+                <Edit2 className="w-3.5 h-3.5" />
+                编辑
+              </>
+            )}
+          </button>
         </div>
+
+        {isEditingAttributes ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* 赛季 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-gray-600">赛季</label>
+                <select
+                  value={editData.attributes?.season || ''}
+                  onChange={(e) => setEditData({
+                    ...editData,
+                    attributes: { ...editData.attributes, season: e.target.value || undefined }
+                  })}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                >
+                  <option value="">-- 选择赛季 --</option>
+                  {ATTRIBUTE_OPTIONS.season.map((season) => (
+                    <option key={season} value={season}>{season}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 类型 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-gray-600">类型</label>
+                <select
+                  value={editData.attributes?.type || ''}
+                  onChange={(e) => setEditData({
+                    ...editData,
+                    attributes: { ...editData.attributes, type: e.target.value || undefined }
+                  })}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                >
+                  <option value="">-- 选择类型 --</option>
+                  {ATTRIBUTE_OPTIONS.type.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 版本 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-gray-600">版本</label>
+                <select
+                  value={editData.attributes?.version || ''}
+                  onChange={(e) => setEditData({
+                    ...editData,
+                    attributes: { ...editData.attributes, version: e.target.value || undefined }
+                  })}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                >
+                  <option value="">-- 选择版本 --</option>
+                  {ATTRIBUTE_OPTIONS.version.map((version) => (
+                    <option key={version} value={version}>{version}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 性别 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-gray-600">性别</label>
+                <select
+                  value={editData.attributes?.gender || ''}
+                  onChange={(e) => setEditData({
+                    ...editData,
+                    attributes: { ...editData.attributes, gender: e.target.value || undefined }
+                  })}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                >
+                  <option value="">-- 选择性别 --</option>
+                  {ATTRIBUTE_OPTIONS.gender.map((gender) => (
+                    <option key={gender} value={gender}>{gender}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 袖长 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-gray-600">袖长</label>
+                <select
+                  value={editData.attributes?.sleeve || ''}
+                  onChange={(e) => setEditData({
+                    ...editData,
+                    attributes: { ...editData.attributes, sleeve: e.target.value || undefined }
+                  })}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                >
+                  <option value="">-- 选择袖长 --</option>
+                  {ATTRIBUTE_OPTIONS.sleeve.map((sleeve) => (
+                    <option key={sleeve} value={sleeve}>{sleeve}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* 事件（多选） */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-gray-600">事件</label>
+              <div className="flex flex-wrap gap-2">
+                {ATTRIBUTE_OPTIONS.event.map((event) => {
+                  const isSelected = editData.attributes?.events?.includes(event) || false;
+                  return (
+                    <button
+                      key={event}
+                      type="button"
+                      onClick={() => {
+                        const currentEvents = editData.attributes?.events || [];
+                        const newEvents = isSelected
+                          ? currentEvents.filter(e => e !== event)
+                          : [...currentEvents, event];
+                        setEditData({
+                          ...editData,
+                          attributes: {
+                            ...editData.attributes,
+                            events: newEvents.length > 0 ? newEvents : undefined
+                          }
+                        });
+                      }}
+                      className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50 text-blue-700 border-blue-300'
+                          : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {event}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {editData.attributes?.season && (
+              <span className="px-2.5 py-1 text-sm bg-blue-50 text-blue-700 rounded-lg">
+                赛季: {editData.attributes.season}
+              </span>
+            )}
+            {editData.attributes?.type && (
+              <span className="px-2.5 py-1 text-sm bg-purple-50 text-purple-700 rounded-lg">
+                类型: {editData.attributes.type}
+              </span>
+            )}
+            {editData.attributes?.gender && (
+              <span className="px-2.5 py-1 text-sm bg-pink-50 text-pink-700 rounded-lg">
+                性别: {editData.attributes.gender}
+              </span>
+            )}
+            {editData.attributes?.version && (
+              <span className="px-2.5 py-1 text-sm bg-orange-50 text-orange-700 rounded-lg">
+                版本: {editData.attributes.version}
+              </span>
+            )}
+            {editData.attributes?.sleeve && (
+              <span className="px-2.5 py-1 text-sm bg-green-50 text-green-700 rounded-lg">
+                袖长: {editData.attributes.sleeve}
+              </span>
+            )}
+            {editData.attributes?.events && editData.attributes.events.length > 0 && (
+              <span className="px-2.5 py-1 text-sm bg-indigo-50 text-indigo-700 rounded-lg">
+                事件: {editData.attributes.events.join(', ')}
+              </span>
+            )}
+            {(!editData.attributes || Object.keys(editData.attributes).length === 0) && (
+              <span className="text-sm text-gray-400">暂无属性</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 分类编辑 */}
@@ -324,6 +528,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
           </div>
         )}
       </div>
+
     </div>
   );
 
@@ -331,6 +536,16 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
   const renderSyncTab = () => {
     const wooIds = product.woo_ids || {};
     const syncStatus = product.sync_status || {};
+    const variations = product.variations || {};
+    const variationCounts = product.variation_counts || {};
+
+    // 检查变体 SKU 是否与父商品 SKU 匹配
+    const checkVariationSkuMatch = (variationSku: string, parentSku: string): 'match' | 'mismatch' | 'empty' => {
+      if (!variationSku) return 'empty';
+      // 变体 SKU 应该以父 SKU 开头或包含父 SKU
+      if (variationSku.startsWith(parentSku) || variationSku.includes(parentSku)) return 'match';
+      return 'mismatch';
+    };
 
     return (
       <div className="space-y-4">
@@ -340,55 +555,128 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
           const status = syncStatus[site.key];
           const sitePrice = product.prices?.[site.key];
           const siteStockQty = product.stock_quantities?.[site.key];
+          const siteVariations = variations[site.key] || [];
+          const variationCount = variationCounts[site.key] || 0;
+
+          // 统计 SKU 匹配情况
+          const skuStats = siteVariations.reduce((acc, v) => {
+            const matchStatus = checkVariationSkuMatch(v.sku, product.sku);
+            acc[matchStatus]++;
+            return acc;
+          }, { match: 0, mismatch: 0, empty: 0 });
 
           return (
-            <div
-              key={site.key}
-              className="flex items-center justify-between p-4 bg-gray-50 rounded-xl"
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{site.flag}</span>
-                <div>
-                  <div className="font-medium text-gray-900">{site.name}</div>
-                  <div className="text-sm text-gray-500">
-                    {wooId ? `ID: ${wooId}` : '未发布'}
-                    {sitePrice !== undefined && ` · $${sitePrice}`}
-                    {siteStockQty !== undefined && ` · 库存: ${siteStockQty}`}
+            <div key={site.key} className="bg-gray-50 rounded-xl overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 sm:p-4">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                  <span className="text-xl sm:text-2xl flex-shrink-0">{site.flag}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-gray-900 truncate">{site.name}</div>
+                    <div className="text-xs sm:text-sm text-gray-500 break-words">
+                      {wooId ? `ID: ${wooId}` : '未发布'}
+                      {sitePrice !== undefined && ` · $${sitePrice}`}
+                      {siteStockQty !== undefined && ` · 库存: ${siteStockQty}`}
+                      {variationCount > 0 && ` · ${variationCount}个变体`}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-3">
-                {/* 状态徽章 */}
-                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-                  status === 'synced' ? 'bg-green-100 text-green-700' :
-                  status === 'error' ? 'bg-red-100 text-red-700' :
-                  status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                  status === 'deleted' ? 'bg-gray-100 text-gray-500' :
-                  'bg-gray-100 text-gray-500'
-                }`}>
-                  {status === 'synced' && <CheckCircle className="w-4 h-4" />}
-                  {status === 'error' && <XCircle className="w-4 h-4" />}
-                  {status === 'pending' && <Clock className="w-4 h-4" />}
-                  {status === 'synced' ? '已同步' :
-                   status === 'error' ? '同步失败' :
-                   status === 'pending' ? '待同步' :
-                   status === 'deleted' ? '已删除' : '未发布'}
+                <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                  {/* 状态徽章 */}
+                  <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs sm:text-sm whitespace-nowrap ${
+                    status === 'synced' ? 'bg-green-100 text-green-700' :
+                    status === 'error' ? 'bg-red-100 text-red-700' :
+                    status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                    status === 'deleted' ? 'bg-gray-100 text-gray-500' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>
+                    {status === 'synced' && <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                    {status === 'error' && <XCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                    {status === 'pending' && <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                    <span className="hidden sm:inline">
+                      {status === 'synced' ? '已同步' :
+                       status === 'error' ? '同步失败' :
+                       status === 'pending' ? '待同步' :
+                       status === 'deleted' ? '已删除' : '未发布'}
+                    </span>
+                  </div>
+
+                  {/* 查看链接 */}
+                  {wooId && (
+                    <a
+                      href={`${SITE_URLS[site.key]}/?p=${wooId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 sm:p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex-shrink-0"
+                      title="在站点查看"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  )}
                 </div>
-
-                {/* 查看链接 */}
-                {wooId && (
-                  <a
-                    href={`${SITE_URLS[site.key]}/?p=${wooId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    title="在站点查看"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
-                )}
               </div>
+
+              {/* 变体信息 */}
+              {siteVariations.length > 0 && (
+                <div className="border-t border-gray-200 px-3 sm:px-4 py-2 sm:py-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-medium text-gray-600">变体 SKU 状态:</span>
+                    {skuStats.match > 0 && (
+                      <span className="px-2 py-0.5 text-xs bg-green-100 text-green-700 rounded">
+                        匹配: {skuStats.match}
+                      </span>
+                    )}
+                    {skuStats.mismatch > 0 && (
+                      <span className="px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded">
+                        不匹配: {skuStats.mismatch}
+                      </span>
+                    )}
+                    {skuStats.empty > 0 && (
+                      <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
+                        无SKU: {skuStats.empty}
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-32 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-100 sticky top-0">
+                        <tr>
+                          <th className="px-2 py-1 text-left text-gray-600 font-medium">ID</th>
+                          <th className="px-2 py-1 text-left text-gray-600 font-medium">SKU</th>
+                          <th className="px-2 py-1 text-left text-gray-600 font-medium">尺码</th>
+                          <th className="px-2 py-1 text-right text-gray-600 font-medium">库存</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {siteVariations.map((v) => {
+                          const skuMatch = checkVariationSkuMatch(v.sku, product.sku);
+                          const sizeAttr = v.attributes?.find((a: { name: string }) => a.name.toLowerCase() === 'size' || a.name === '尺码');
+                          return (
+                            <tr key={v.id} className="border-b border-gray-100 last:border-0">
+                              <td className="px-2 py-1 text-gray-500">{v.id}</td>
+                              <td className={`px-2 py-1 font-mono ${
+                                skuMatch === 'match' ? 'text-green-600' :
+                                skuMatch === 'mismatch' ? 'text-red-600 font-semibold' :
+                                'text-gray-400 italic'
+                              }`}>
+                                {v.sku || '(无)'}
+                              </td>
+                              <td className="px-2 py-1 text-gray-700">
+                                {sizeAttr?.option || v.attributes?.map((a: { option: string }) => a.option).join(', ') || '-'}
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <span className={v.stock_status === 'instock' ? 'text-green-600' : 'text-red-600'}>
+                                  {v.stock_quantity ?? '-'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -441,43 +729,47 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
       />
 
       {/* 弹窗内容 */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] mx-4 lg:mx-0 overflow-hidden flex flex-col">
+      <div className="relative bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full h-full lg:h-auto lg:max-w-5xl lg:max-h-[90vh] lg:mx-4 overflow-hidden flex flex-col">
         {/* 头部 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <Package className="w-5 h-5 text-gray-400" />
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">商品详情</h2>
-              <p className="text-sm text-gray-500">{product.sku}</p>
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            <Package className="w-5 h-5 text-gray-400 flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900 truncate">商品详情</h2>
+              <p className="text-xs sm:text-sm text-gray-500 truncate">{product.sku}</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* 主体内容 */}
-        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row min-h-0">
           {/* 左侧/顶部 - 图片区域 */}
-          <div className="h-[200px] lg:h-auto lg:w-2/5 p-4 lg:p-6 border-b lg:border-b-0 lg:border-r border-gray-200 overflow-y-auto flex-shrink-0 lg:flex-shrink">
+          <div className="h-[280px] sm:h-[320px] lg:h-auto lg:w-2/5 p-3 sm:p-4 lg:p-6 border-b lg:border-b-0 lg:border-r border-gray-200 overflow-y-auto flex-shrink-0">
             <ImageGallery
               images={editData.images}
               onChange={(images) => setEditData({ ...editData, images })}
+              showLinks={true}
+              onCopyLink={handleCopyImageLink}
+              copiedIndex={copiedIndex}
+              sku={product.sku}
             />
           </div>
 
           {/* 右侧/底部 - 信息区域 */}
           <div className="flex-1 lg:w-3/5 flex flex-col overflow-hidden min-h-0">
             {/* Tab 切换 */}
-            <div className="flex gap-1 p-2 bg-gray-50 border-b border-gray-200">
+            <div className="flex gap-1 p-1.5 sm:p-2 bg-gray-50 border-b border-gray-200 overflow-x-auto flex-shrink-0">
               {TABS.map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all ${
+                  className={`flex-shrink-0 py-2 px-3 sm:px-4 text-xs sm:text-sm font-medium rounded-lg transition-all whitespace-nowrap ${
                     activeTab === tab.key
                       ? 'bg-white text-gray-900 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900'
@@ -489,7 +781,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
             </div>
 
             {/* Tab 内容 */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               {activeTab === 'basic' && renderBasicTab()}
               
               {activeTab === 'prices' && (
@@ -519,25 +811,25 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
         </div>
 
         {/* 底部操作栏 */}
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 px-4 lg:px-6 py-4 border-t border-gray-200 bg-gray-50">
+        <div className="flex flex-col gap-3 px-4 sm:px-6 py-4 border-t border-gray-200 bg-gray-50 flex-shrink-0">
           {/* 错误提示 */}
           {error && (
             <div className="flex items-center gap-2 text-red-600 text-sm">
-              <AlertCircle className="w-4 h-4" />
-              {error}
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span className="break-words">{error}</span>
             </div>
           )}
 
-          {!error && (
-            <div className="text-sm text-gray-500 hidden lg:block">
-              {hasChanges && <span className="text-orange-600">有未保存的更改</span>}
+          {!error && hasChanges && (
+            <div className="text-xs sm:text-sm text-orange-600">
+              有未保存的更改
             </div>
           )}
 
-          <div className="flex items-center gap-2 lg:gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
             <button
               onClick={onClose}
-              className="flex-1 lg:flex-none px-4 py-3 lg:py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              className="flex-1 sm:flex-none px-4 py-2.5 sm:py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
             >
               关闭
             </button>
@@ -545,42 +837,43 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
             <button
               onClick={handleSave}
               disabled={isSaving || !hasChanges}
-              className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 py-3 lg:py-2 text-sm bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 text-sm bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSaving ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Save className="w-4 h-4" />
               )}
-              <span className="hidden sm:inline">保存</span><span className="sm:hidden">存</span>
+              <span>保存</span>
             </button>
 
             <button
               onClick={() => setShowSyncDialog(true)}
               disabled={isSyncing}
-              className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 py-3 lg:py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSyncing ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Upload className="w-4 h-4" />
               )}
-              <span className="hidden sm:inline">同步到站点</span><span className="sm:hidden">同步</span>
+              <span className="hidden sm:inline">同步到站点</span>
+              <span className="sm:hidden">同步</span>
             </button>
           </div>
         </div>
 
         {/* 同步站点选择弹窗 */}
         {showSyncDialog && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
             <div
               className="absolute inset-0 bg-black/30"
               onClick={() => setShowSyncDialog(false)}
             />
-            <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">选择同步站点</h3>
+            <div className="relative bg-white rounded-xl shadow-xl p-4 sm:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">选择同步站点</h3>
               
-              <div className="space-y-3 mb-6">
+              <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6">
                 {SITES.map((site) => {
                   const wooId = product.woo_ids?.[site.key];
                   const isSelected = selectedSites.includes(site.key);
@@ -641,20 +934,21 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                 </label>
               </div>
 
-              <div className="flex justify-end gap-3">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3">
                 <button
                   onClick={() => setShowSyncDialog(false)}
-                  className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                  className="w-full sm:w-auto px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleSync}
                   disabled={selectedSites.length === 0}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg disabled:opacity-50"
                 >
                   <Upload className="w-4 h-4" />
-                  {syncImages ? '完整同步' : '快速同步'} ({selectedSites.length} 站点)
+                  <span className="hidden sm:inline">{syncImages ? '完整同步' : '快速同步'} ({selectedSites.length} 站点)</span>
+                  <span className="sm:hidden">{syncImages ? '完整同步' : '快速同步'}</span>
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-3 text-center">

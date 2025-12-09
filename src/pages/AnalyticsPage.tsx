@@ -1,60 +1,41 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { BarChart3, ShoppingBag, Package, DollarSign, RotateCcw, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
-import { getAnalytics, getProductRanking, formatRevenue } from '../lib/analytics';
-import type { AnalyticsData, ProductStat, SiteKey } from '../lib/types';
+import { formatRevenue } from '../lib/analytics';
+import type { SiteKey } from '../lib/types';
 import { getSiteLabel } from '../lib/orders';
 import { DateRangePicker } from '../components/DateRangePicker';
+import { getProductBySku, type LocalProduct } from '../lib/products';
+import { ProductDetailModal } from '../components/ProductDetailModal';
+import { useAnalyticsData } from '../hooks/useAnalytics';
 
 const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr'];
 
 export function AnalyticsPage() {
   // 日期工具函数
   const getToday = () => new Date().toISOString().split('T')[0];
-  const getTomorrow = () => {
+  const getDaysAgo = (days: number) => {
     const d = new Date();
-    d.setDate(d.getDate() + 1);
+    d.setDate(d.getDate() - days);
     return d.toISOString().split('T')[0];
   };
 
-  // 状态
-  const [dateFrom, setDateFrom] = useState(getToday);
-  const [dateTo, setDateTo] = useState(getTomorrow);
+  // 状态 - 默认显示近7天
+  const [dateFrom, setDateFrom] = useState(getDaysAgo(6));
+  const [dateTo, setDateTo] = useState(getToday);
   const [selectedSites, setSelectedSites] = useState<SiteKey[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
-  const [products, setProducts] = useState<ProductStat[]>([]);
   const [showAllProducts, setShowAllProducts] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<LocalProduct | null>(null);
+  const [loadingProduct, setLoadingProduct] = useState(false);
 
-  // 加载数据
-  const loadData = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
+  // React Query - 分析数据
+  const { analytics, products, isLoading, error: analyticsError, refetch: loadData } = useAnalyticsData({
+    dateFrom,
+    dateTo,
+    sites: selectedSites.length > 0 ? selectedSites : undefined,
+    limit: 100,
+  });
 
-      const params = {
-        dateFrom,
-        dateTo,
-        sites: selectedSites.length > 0 ? selectedSites : undefined,
-      };
-
-      const [analyticsData, productData] = await Promise.all([
-        getAnalytics(params),
-        getProductRanking({ ...params, limit: 100 }),
-      ]);
-
-      setAnalytics(analyticsData);
-      setProducts(productData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载数据失败');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [dateFrom, dateTo, selectedSites]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const error = analyticsError ? (analyticsError as Error).message : null;
 
   // 切换站点筛选
   const toggleSite = (site: SiteKey) => {
@@ -65,23 +46,41 @@ export function AnalyticsPage() {
     );
   };
 
+  // 点击商品打开详情
+  const handleProductClick = async (sku: string) => {
+    try {
+      setLoadingProduct(true);
+      const product = await getProductBySku(sku);
+      if (product) {
+        setSelectedProduct(product);
+      } else {
+        alert('商品不存在');
+      }
+    } catch (err) {
+      console.error('加载商品失败:', err);
+      alert('加载商品失败: ' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setLoadingProduct(false);
+    }
+  };
+
   // 显示的商品列表
   const displayProducts = showAllProducts ? products : products.slice(0, 10);
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 固定头部区域 */}
-      <div className="sticky top-0 z-20 bg-gray-50 px-4 lg:px-6 pt-4 lg:pt-6 pb-4 space-y-4">
+    <div className="h-full flex flex-col overflow-auto">
+      {/* 头部区域 - 不再固定 */}
+      <div className="bg-gray-50 px-4 sm:px-6 pt-4 sm:pt-6 pb-4 sm:pb-6 space-y-4 sm:space-y-5">
         {/* 页面标题 */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          <BarChart3 className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+          <BarChart3 className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 flex-shrink-0" />
           <h1 className="text-lg sm:text-xl font-semibold text-gray-900">销售分析</h1>
           <span className="hidden sm:inline text-sm text-gray-500">（基于订单数据统计）</span>
         </div>
 
         {/* 筛选区域 */}
-        <div className="bg-white rounded-xl shadow-sm border p-4">
-          <div className="flex flex-col lg:flex-row gap-4">
+        <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+          <div className="flex flex-col lg:flex-row gap-4 sm:gap-5">
             {/* 日期范围 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">日期范围</label>
@@ -124,12 +123,12 @@ export function AnalyticsPage() {
       </div>
 
       {/* 可滚动内容区域 */}
-      <div className="flex-1 px-4 lg:px-6 pb-4 lg:pb-6 overflow-auto space-y-6">
+      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6 space-y-5 sm:space-y-6">
         {/* 错误提示 */}
         {error && (
-          <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600" />
-            <span className="text-sm text-red-700">{error}</span>
+          <div className="p-4 sm:p-5 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <span className="text-sm text-red-700 break-words">{error}</span>
           </div>
         )}
 
@@ -141,83 +140,92 @@ export function AnalyticsPage() {
         ) : analytics && (
           <>
             {/* 统计卡片 */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
               {/* 订单数 */}
-              <div className="bg-white rounded-xl shadow-sm border p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <ShoppingBag className="w-5 h-5 text-blue-600" />
+              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+                <div className="flex items-center gap-3 sm:gap-4 mb-3">
+                  <div className="p-2 sm:p-2.5 bg-blue-100 rounded-lg flex-shrink-0">
+                    <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
                   </div>
-                  <span className="text-sm text-gray-500">有效订单</span>
+                  <span className="text-sm sm:text-base text-gray-500">有效订单</span>
                 </div>
-                <div className="text-2xl font-bold text-gray-900">{analytics.orderCount}</div>
-                <div className="text-xs text-gray-400 mt-1">已完成 + 处理中</div>
+                <div className="text-2xl sm:text-3xl font-bold text-gray-900">{analytics.orderCount}</div>
+                <div className="text-xs sm:text-sm text-gray-400 mt-1.5">已完成 + 处理中</div>
               </div>
 
               {/* 销售件数 */}
-              <div className="bg-white rounded-xl shadow-sm border p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <Package className="w-5 h-5 text-green-600" />
+              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+                <div className="flex items-center gap-3 sm:gap-4 mb-3">
+                  <div className="p-2 sm:p-2.5 bg-green-100 rounded-lg flex-shrink-0">
+                    <Package className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
                   </div>
-                  <span className="text-sm text-gray-500">销售件数</span>
+                  <span className="text-sm sm:text-base text-gray-500">销售件数</span>
                 </div>
-                <div className="text-2xl font-bold text-gray-900">{analytics.itemCount}</div>
-                <div className="text-xs text-gray-400 mt-1">商品总数量</div>
+                <div className="text-2xl sm:text-3xl font-bold text-gray-900">{analytics.itemCount}</div>
+                <div className="text-xs sm:text-sm text-gray-400 mt-1.5">商品总数量</div>
               </div>
 
               {/* 销售额 */}
-              <div className="bg-white rounded-xl shadow-sm border p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-emerald-100 rounded-lg">
-                    <DollarSign className="w-5 h-5 text-emerald-600" />
+              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+                <div className="flex items-center gap-3 sm:gap-4 mb-3">
+                  <div className="p-2 sm:p-2.5 bg-emerald-100 rounded-lg flex-shrink-0">
+                    <DollarSign className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
                   </div>
-                  <span className="text-sm text-gray-500">销售额</span>
+                  <span className="text-sm sm:text-base text-gray-500">销售额</span>
                 </div>
-                <div className="text-2xl font-bold text-gray-900">{formatRevenue(analytics.revenue)}</div>
-                <div className="text-xs text-gray-400 mt-1">有效订单总额</div>
+                <div className="text-2xl sm:text-3xl font-bold text-gray-900">{formatRevenue(analytics.revenue)}</div>
+                <div className="text-xs sm:text-sm text-gray-400 mt-1.5">有效订单总额</div>
               </div>
 
               {/* 退款额 */}
-              <div className="bg-white rounded-xl shadow-sm border p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-red-100 rounded-lg">
-                    <RotateCcw className="w-5 h-5 text-red-600" />
+              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+                <div className="flex items-center gap-3 sm:gap-4 mb-3">
+                  <div className="p-2 sm:p-2.5 bg-red-100 rounded-lg flex-shrink-0">
+                    <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 text-red-600" />
                   </div>
-                  <span className="text-sm text-gray-500">退款</span>
+                  <span className="text-sm sm:text-base text-gray-500">退款</span>
                 </div>
-                <div className="text-2xl font-bold text-gray-900">{formatRevenue(analytics.refunds)}</div>
-                <div className="text-xs text-gray-400 mt-1">{analytics.refundCount} 笔退款</div>
+                <div className="text-2xl sm:text-3xl font-bold text-gray-900">{formatRevenue(analytics.refunds)}</div>
+                <div className="text-xs sm:text-sm text-gray-400 mt-1.5">{analytics.refundCount} 笔退款</div>
               </div>
             </div>
 
             {/* 每日趋势 */}
             {analytics.dailyStats.length > 1 && (
-              <div className="bg-white rounded-xl shadow-sm border p-4">
-                <h2 className="text-lg font-medium text-gray-900 mb-4">每日趋势</h2>
+              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+                <h2 className="text-lg sm:text-xl font-medium text-gray-900 mb-4 sm:mb-5">每日趋势</h2>
                 <div className="overflow-x-auto">
                   <div className="min-w-[600px]">
                     {/* 简单的柱状图 */}
-                    <div className="flex items-end gap-1" style={{ height: '160px' }}>
-                      {(() => {
-                        const maxRevenue = Math.max(...analytics.dailyStats.map(d => d.revenue));
-                        return analytics.dailyStats.map(day => {
-                          const heightPx = maxRevenue > 0 ? (day.revenue / maxRevenue) * 120 : 0;
-                          return (
-                            <div key={day.date} className="flex-1 flex flex-col items-center justify-end">
-                              <div className="text-xs text-gray-500 mb-1">{formatRevenue(day.revenue)}</div>
-                              <div
-                                className="w-full bg-emerald-500 rounded-t transition-all hover:bg-emerald-600 cursor-pointer"
-                                style={{ height: `${Math.max(heightPx, 4)}px` }}
-                                title={`${day.date}: ${day.orderCount} 单, ${day.itemCount} 件, ${formatRevenue(day.revenue)}`}
-                              />
-                              <div className="text-xs text-gray-400 mt-1 truncate w-full text-center">
-                                {day.date.slice(5)}
+                    <div className="relative" style={{ height: '200px' }}>
+                      <div className="flex items-end gap-1.5 sm:gap-2 h-full">
+                        {(() => {
+                          const maxRevenue = Math.max(...analytics.dailyStats.map(d => d.revenue));
+                          return analytics.dailyStats.map(day => {
+                            const heightPx = maxRevenue > 0 ? (day.revenue / maxRevenue) * 140 : 0;
+                            return (
+                              <div key={day.date} className="flex-1 flex flex-col items-center justify-end h-full relative">
+                                {/* 金额数字 - 显示在柱状图上方 */}
+                                <div className="absolute top-0 left-0 right-0 flex justify-center mb-2">
+                                  <div className="text-xs sm:text-sm font-medium text-gray-700 bg-white/90 backdrop-blur-sm px-2 py-0.5 rounded shadow-sm">
+                                    {formatRevenue(day.revenue)}
+                                  </div>
+                                </div>
+                                {/* 柱状图 */}
+                                <div
+                                  className="w-full bg-emerald-500 rounded-t transition-all hover:bg-emerald-600 cursor-pointer relative group"
+                                  style={{ height: `${Math.max(heightPx, 4)}px` }}
+                                  title={`${day.date}: ${day.orderCount} 单, ${day.itemCount} 件, ${formatRevenue(day.revenue)}`}
+                                />
+                                {/* 日期标签 */}
+                                <div className="text-xs sm:text-sm text-gray-400 mt-2 truncate w-full text-center">
+                                  {day.date.slice(5)}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        });
-                      })()}
+                            );
+                          });
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -226,13 +234,13 @@ export function AnalyticsPage() {
 
             {/* 商品销量排行 */}
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <div className="p-4 border-b flex items-center justify-between">
-                <h2 className="text-lg font-medium text-gray-900">商品销量排行</h2>
-                <span className="text-sm text-gray-500">{products.length} 个商品</span>
+              <div className="p-4 sm:p-5 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
+                <h2 className="text-lg sm:text-xl font-medium text-gray-900">商品销量排行</h2>
+                <span className="text-sm sm:text-base text-gray-500">{products.length} 个商品</span>
               </div>
 
               {products.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
+                <div className="text-center py-12 text-gray-500 px-4">
                   暂无销售数据
                 </div>
               ) : (
@@ -241,19 +249,23 @@ export function AnalyticsPage() {
                     <table className="w-full min-w-[700px]">
                       <thead className="bg-gray-50 border-b border-gray-100">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">排名</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">商品</th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">销量</th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">收入</th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">退款</th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">订单数</th>
+                          <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">排名</th>
+                          <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">商品</th>
+                          <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">销量</th>
+                          <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">收入</th>
+                          <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">退款</th>
+                          <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">订单数</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {displayProducts.map((product, index) => (
-                          <tr key={product.sku} className="hover:bg-gray-50">
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+                          <tr 
+                            key={product.sku} 
+                            className="hover:bg-gray-50 transition-colors cursor-pointer"
+                            onClick={() => handleProductClick(product.sku)}
+                          >
+                            <td className="px-4 sm:px-5 py-3 sm:py-4">
+                              <span className={`inline-flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full text-xs sm:text-sm font-medium ${
                                 index === 0 ? 'bg-yellow-100 text-yellow-800' :
                                 index === 1 ? 'bg-gray-200 text-gray-700' :
                                 index === 2 ? 'bg-orange-100 text-orange-800' :
@@ -262,33 +274,33 @@ export function AnalyticsPage() {
                                 {index + 1}
                               </span>
                             </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-3">
+                            <td className="px-4 sm:px-5 py-3 sm:py-4">
+                              <div className="flex items-center gap-3 sm:gap-4">
                                 {product.image ? (
                                   <img
                                     src={product.image}
                                     alt={product.name}
-                                    className="w-10 h-10 object-cover rounded-lg bg-gray-100"
+                                    className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded-lg bg-gray-100 flex-shrink-0"
                                   />
                                 ) : (
-                                  <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                                    <Package className="w-5 h-5 text-gray-400" />
+                                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                    <Package className="w-6 h-6 sm:w-7 sm:h-7 text-gray-400" />
                                   </div>
                                 )}
-                                <div>
-                                  <div className="font-mono text-sm text-gray-900">{product.sku}</div>
-                                  <div className="text-xs text-gray-500 line-clamp-1 max-w-[200px]">{product.name}</div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-mono text-xs sm:text-sm text-blue-600 hover:text-blue-700 truncate">{product.sku}</div>
+                                  <div className="text-xs sm:text-sm text-gray-500 line-clamp-2 max-w-[200px] sm:max-w-[280px]">{product.name}</div>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-right">
-                              <span className="font-medium text-gray-900">{product.quantity}</span>
-                              <span className="text-gray-500 text-sm"> 件</span>
+                            <td className="px-4 sm:px-5 py-3 sm:py-4 text-right">
+                              <span className="font-medium text-sm sm:text-base text-gray-900">{product.quantity}</span>
+                              <span className="text-gray-500 text-xs sm:text-sm"> 件</span>
                             </td>
-                            <td className="px-4 py-3 text-right font-medium text-emerald-600">
+                            <td className="px-4 sm:px-5 py-3 sm:py-4 text-right font-medium text-sm sm:text-base text-emerald-600">
                               {formatRevenue(product.revenue)}
                             </td>
-                            <td className="px-4 py-3 text-right">
+                            <td className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs sm:text-sm">
                               {product.refundQuantity > 0 ? (
                                 <span className="text-red-600">
                                   -{product.refundQuantity} 件 / {formatRevenue(product.refundAmount)}
@@ -297,7 +309,7 @@ export function AnalyticsPage() {
                                 <span className="text-gray-400">-</span>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-right text-gray-600">
+                            <td className="px-4 sm:px-5 py-3 sm:py-4 text-right text-sm sm:text-base text-gray-600">
                               {product.orderCount}
                             </td>
                           </tr>
@@ -308,19 +320,19 @@ export function AnalyticsPage() {
 
                   {/* 展开/收起 */}
                   {products.length > 10 && (
-                    <div className="p-3 border-t bg-gray-50">
+                    <div className="p-3 sm:p-4 border-t bg-gray-50">
                       <button
                         onClick={() => setShowAllProducts(!showAllProducts)}
-                        className="w-full flex items-center justify-center gap-2 text-sm text-gray-600 hover:text-gray-900"
+                        className="w-full flex items-center justify-center gap-2 text-sm sm:text-base text-gray-600 hover:text-gray-900 transition-colors"
                       >
                         {showAllProducts ? (
                           <>
-                            <ChevronUp className="w-4 h-4" />
+                            <ChevronUp className="w-4 h-4 sm:w-5 sm:h-5" />
                             收起
                           </>
                         ) : (
                           <>
-                            <ChevronDown className="w-4 h-4" />
+                            <ChevronDown className="w-4 h-4 sm:w-5 sm:h-5" />
                             显示全部 {products.length} 个商品
                           </>
                         )}
@@ -333,6 +345,28 @@ export function AnalyticsPage() {
           </>
         )}
       </div>
+
+      {/* 商品详情弹窗 */}
+      {selectedProduct && (
+        <ProductDetailModal
+          product={selectedProduct}
+          onClose={() => setSelectedProduct(null)}
+          onSaved={async () => {
+            // 刷新分析数据
+            await loadData();
+          }}
+        />
+      )}
+
+      {/* 加载商品时的遮罩 */}
+      {loadingProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <div className="bg-white rounded-xl p-6 shadow-xl flex flex-col items-center gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-gray-600" />
+            <span className="text-sm text-gray-600">加载商品详情...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

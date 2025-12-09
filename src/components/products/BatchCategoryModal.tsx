@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { X, Tag, Upload, Loader2, CheckCircle, AlertCircle, Search, Check, Plus, Minus, RefreshCw } from 'lucide-react';
-import { getAllCategories, updateProductDetails, type LocalProduct } from '../../lib/products';
+import { updateProductDetails, type LocalProduct } from '../../lib/products';
 import { syncProductsBatch, type SyncResult } from '../../lib/sync-api';
 import type { SiteKey } from '../../lib/types';
 import { SITES } from '../../lib/attributes';
+import { useAllCategories } from '../../hooks/useProducts';
 
 interface BatchCategoryModalProps {
   products: LocalProduct[];
@@ -18,20 +19,12 @@ export function BatchCategoryModal({ products, onClose, onComplete }: BatchCateg
   const [step, setStep] = useState<Step>('select');
   const [operation, setOperation] = useState<Operation>('add');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [allCategories, setAllCategories] = useState<{ id: number; name: string; parent: number }[]>([]);
+  const { data: allCategories = [] } = useAllCategories();
   const [selectedSites, setSelectedSites] = useState<SiteKey[]>(['com', 'uk', 'de', 'fr']);
   const [syncResults, setSyncResults] = useState<{ sku: string; results: SyncResult[] }[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [_error, setError] = useState<string | null>(null);
-
-  // 加载所有分类
-  useEffect(() => {
-    getAllCategories().then(cats => {
-      console.log('Loaded categories:', cats.length);
-      setAllCategories(cats);
-    }).catch(console.error);
-  }, []);
 
   // 搜索过滤分类
   const filteredCategories = useMemo(() => {

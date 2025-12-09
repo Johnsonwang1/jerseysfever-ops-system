@@ -164,3 +164,109 @@ export async function uploadImageToStorage(base64Data: string, filename: string)
 
   return urlData.publicUrl;
 }
+
+/**
+ * 从远程 URL 下载图片并转存到 Supabase Storage
+ * 通过 Edge Function 服务端转存，避免 CORS 问题
+ */
+export async function transferImageToStorage(
+  imageUrl: string, 
+  sku: string,
+  prefix: string = 'ai-processed'
+): Promise<string> {
+  const { data, error } = await supabase.functions.invoke('transfer-image', {
+    body: { imageUrl, sku, prefix }
+  });
+
+  if (error) {
+    console.error('Transfer image error:', error);
+    throw new Error(`转存失败: ${error.message}`);
+  }
+
+  if (!data.success) {
+    throw new Error(data.error || '转存失败');
+  }
+
+  return data.url;
+}
+
+// ==================== 图片迁移 API ====================
+
+export interface ImageMigrationStats {
+  totalProducts: number;
+  productsWithImages: number;
+  productsNeedMigration: number;
+  totalImages: number;
+  imagesOnCom: number;
+  imagesOnStorage: number;
+}
+
+export interface MigrationResult {
+  sku: string;
+  success: boolean;
+  migrated: number;
+  skipped: number;
+  failed: number;
+  error?: string;
+}
+
+export interface BatchMigrationResult {
+  results: MigrationResult[];
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * 获取图片迁移统计信息
+ */
+export async function getImageMigrationStats(): Promise<ImageMigrationStats> {
+  const { data, error } = await supabase.functions.invoke('migrate-images', {
+    body: { action: 'get-stats' }
+  });
+
+  if (error) {
+    console.error('Get migration stats error:', error);
+    throw new Error(`获取统计失败: ${error.message}`);
+  }
+
+  return data.stats;
+}
+
+/**
+ * 迁移单个产品的图片
+ */
+export async function migrateProductImages(sku: string): Promise<MigrationResult> {
+  const { data, error } = await supabase.functions.invoke('migrate-images', {
+    body: { action: 'migrate-single', sku }
+  });
+
+  if (error) {
+    console.error('Migrate product images error:', error);
+    throw new Error(`迁移失败: ${error.message}`);
+  }
+
+  return data.result;
+}
+
+/**
+ * 批量迁移产品图片
+ */
+export async function migrateImagesBatch(
+  limit: number = 50,
+  offset: number = 0
+): Promise<BatchMigrationResult> {
+  const { data, error } = await supabase.functions.invoke('migrate-images', {
+    body: { action: 'migrate-batch', limit, offset }
+  });
+
+  if (error) {
+    console.error('Batch migrate images error:', error);
+    throw new Error(`批量迁移失败: ${error.message}`);
+  }
+
+  return {
+    results: data.results,
+    total: data.total,
+    hasMore: data.hasMore,
+  };
+}

@@ -27,11 +27,6 @@ export interface SyncProductResponse {
   results: SyncResult[];
 }
 
-export interface SyncAllResponse {
-  success: boolean;
-  results: Record<SiteKey, { synced: number; errors: number }>;
-}
-
 // ==================== 同步单个商品 ====================
 
 /**
@@ -128,34 +123,182 @@ export async function syncProductsBatch(
   return data.results as BatchSyncResult[];
 }
 
-// ==================== 全量同步 ====================
+// ==================== 从站点拉取商品数据 ====================
+
+export interface PullResult {
+  sku: string;
+  success: boolean;
+  error?: string;
+}
 
 /**
- * 全量同步所有站点商品
- * 从 WooCommerce 拉取数据到 Supabase
+ * 从站点拉取商品数据到 PIM（包括变体信息）
  */
-export async function syncAllProducts(
-  onProgress?: (message: string) => void
-): Promise<SyncAllResponse> {
-  console.log('🚀 调用 Edge Function 全量同步');
-  onProgress?.('正在连接服务...');
+export async function pullProductsFromSite(
+  skus: string[],
+  site: SiteKey
+): Promise<PullResult[]> {
+  console.log(`📥 从 ${site} 站点拉取 ${skus.length} 个商品数据`);
   
   const { data, error } = await supabase.functions.invoke('woo-sync', {
     body: {
-      action: 'sync-all',
+      action: 'pull-products',
+      skus,
+      site,
     },
   });
 
   if (error) {
     console.error('Edge Function 调用失败:', error);
-    throw new Error(error.message || '全量同步失败');
+    return skus.map(sku => ({
+      sku,
+      success: false,
+      error: error.message || 'Edge Function 调用失败',
+    }));
   }
 
   if (!data?.success) {
-    throw new Error(data?.error || '全量同步失败');
+    return skus.map(sku => ({
+      sku,
+      success: false,
+      error: data?.error || '拉取失败',
+    }));
   }
 
-  return data as SyncAllResponse;
+  return data.results as PullResult[];
+}
+
+// ==================== 批量同步变体 ====================
+
+export interface SyncVariationsResult {
+  synced: number;
+  failed: number;
+  skipped: number;
+  total: number;
+  hasMore: boolean;
+  details: Array<{ sku: string; varCount: number; error?: string }>;
+}
+
+/**
+ * 批量同步指定站点的商品变体
+ * @param site 站点
+ * @param limit 每批数量
+ * @param offset 偏移量
+ */
+export async function syncVariationsBatch(
+  site: SiteKey,
+  limit: number = 50,
+  offset: number = 0
+): Promise<SyncVariationsResult> {
+  console.log(`🔄 [${site}] 同步变体 (limit=${limit}, offset=${offset})`);
+  
+  const { data, error } = await supabase.functions.invoke('woo-sync', {
+    body: {
+      action: 'sync-variations',
+      site,
+      limit,
+      offset,
+    },
+  });
+
+  if (error) {
+    console.error('同步变体失败:', error);
+    throw new Error(error.message || '同步变体失败');
+  }
+
+  if (!data?.success) {
+    throw new Error(data?.error || '同步变体失败');
+  }
+
+  return {
+    synced: data.synced,
+    failed: data.failed,
+    skipped: data.skipped,
+    total: data.total,
+    hasMore: data.hasMore,
+    details: data.details,
+  };
+}
+
+/**
+ * 全量同步指定站点的所有商品变体
+ * @param site 站点
+ * @param onProgress 进度回调
+ */
+export async function syncAllVariations(
+  site: SiteKey,
+  onProgress?: (progress: { synced: number; total: number; current: string }) => void
+): Promise<{ synced: number; failed: number; total: number }> {
+  let offset = 0;
+  const limit = 50;
+  let totalSynced = 0;
+  let totalFailed = 0;
+  let total = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const result = await syncVariationsBatch(site, limit, offset);
+    totalSynced += result.synced;
+    totalFailed += result.failed;
+    total = result.total;
+    hasMore = result.hasMore;
+    offset += limit;
+
+    // 回调进度
+    if (onProgress && result.details.length > 0) {
+      const lastSku = result.details[result.details.length - 1]?.sku || '';
+      onProgress({
+        synced: totalSynced,
+        total,
+        current: lastSku,
+      });
+    }
+  }
+
+  return { synced: totalSynced, failed: totalFailed, total };
+}
+
+// ==================== 重建变体 ====================
+
+export interface RebuildResult {
+  site: SiteKey;
+  success: boolean;
+  deleted: number;
+  created: number;
+  error?: string;
+}
+
+/**
+ * 重建商品变体
+ * 删除旧变体，创建新变体（SKU 格式: {产品SKU}-{尺码}）
+ */
+export async function rebuildVariations(
+  sku: string,
+  sites: SiteKey[]
+): Promise<{ sku: string; results: RebuildResult[] }> {
+  console.log(`🔄 重建变体: ${sku} -> ${sites.join(', ')}`);
+  
+  const { data, error } = await supabase.functions.invoke('woo-sync', {
+    body: {
+      action: 'rebuild-variations',
+      sku,
+      sites,
+    },
+  });
+
+  if (error) {
+    console.error('重建变体失败:', error);
+    throw new Error(error.message || '重建变体失败');
+  }
+
+  if (!data?.success) {
+    throw new Error(data?.error || '重建变体失败');
+  }
+
+  return {
+    sku: data.sku,
+    results: data.results,
+  };
 }
 
 // ==================== 清理图片 ====================
@@ -342,28 +485,41 @@ export interface PullResult {
   error?: string;
 }
 
-export interface PullProductsResponse {
+// ==================== 获取商品变体 ====================
+
+export interface ProductVariation {
+  id: number;
+  sku: string;
+  regular_price: string;
+  sale_price: string;
+  stock_quantity: number | null;
+  stock_status: string;
+  attributes: { name: string; option: string }[];
+}
+
+export interface GetVariationsResponse {
   success: boolean;
-  results: PullResult[];
+  variations: ProductVariation[];
+  count: number;
+  error?: string;
 }
 
 /**
- * 从指定站点拉取商品数据到 PIM
- * 将 WooCommerce 站点数据同步回本地数据库
- * @param skus 商品 SKU 列表
- * @param site 从哪个站点拉取数据（通常是 com）
+ * 获取商品的所有变体
+ * @param site 站点
+ * @param productId WooCommerce 商品 ID
  */
-export async function pullProductsFromSite(
-  skus: string[],
-  site: SiteKey
-): Promise<PullProductsResponse> {
-  console.log(`📥 从 ${site} 站点拉取 ${skus.length} 个商品数据到 PIM`);
+export async function getProductVariations(
+  site: SiteKey,
+  productId: number
+): Promise<GetVariationsResponse> {
+  console.log(`📦 获取 ${site} 站点商品 ${productId} 的变体`);
 
   const { data, error } = await supabase.functions.invoke('woo-sync', {
     body: {
-      action: 'pull-products',
-      skus,
+      action: 'get-variations',
       site,
+      productId,
     },
   });
 
@@ -371,14 +527,12 @@ export async function pullProductsFromSite(
     console.error('Edge Function 调用失败:', error);
     return {
       success: false,
-      results: skus.map(sku => ({
-        sku,
-        success: false,
-        error: error.message || 'Edge Function 调用失败',
-      })),
+      variations: [],
+      count: 0,
+      error: error.message || 'Edge Function 调用失败',
     };
   }
 
-  return data as PullProductsResponse;
+  return data as GetVariationsResponse;
 }
 
