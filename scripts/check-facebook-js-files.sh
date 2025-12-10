@@ -106,3 +106,5 @@ echo "1. 检查文件是否存在：ssh siteground 'ls -la www/$DOMAIN/public_ht
 echo "2. 检查文件权限：ssh siteground 'ls -ld www/$DOMAIN/public_html/wp-content/plugins/facebook-for-woocommerce/assets/build/admin/'"
 echo "3. 如果文件不存在，可能需要重新安装插件或重新构建资源文件"
 
+
+

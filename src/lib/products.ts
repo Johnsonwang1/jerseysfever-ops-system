@@ -11,6 +11,7 @@ export interface LocalProduct {
   name: string;  // 主站名称（用于列表显示）
   slug: string | null;
   images: string[];  // 共享图片
+  video_url?: string | null;  // 商品视频URL
   categories: string[];  // 共享分类
 
   // 商品属性（共享）

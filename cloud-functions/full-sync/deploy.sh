@@ -61,3 +61,5 @@ echo ""
 echo "测试命令:"
 echo "  curl -X POST $FUNCTION_URL -H 'Content-Type: application/json' -d '{\"action\": \"health\"}'"
 
+
+

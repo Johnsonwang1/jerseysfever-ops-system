@@ -131,3 +131,5 @@ echo "3. 或者清除 WordPress 缓存："
 echo "   ssh $SSH_HOST 'rm -rf www/$DOMAIN/public_html/wp-content/cache/*'"
 echo ""
 
+
+

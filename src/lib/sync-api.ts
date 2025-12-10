@@ -14,6 +14,7 @@ export type SyncField = 'name' | 'description' | 'categories' | 'prices' | 'stoc
 export interface SyncOptions {
   fields?: SyncField[];  // 指定要同步的字段，不传则同步所有（除 images）
   syncImages?: boolean;  // 兼容旧参数
+  syncVideo?: boolean;   // 是否同步视频
 }
 
 export interface SyncResult {
@@ -64,6 +65,48 @@ export async function syncProductToSites(
       site,
       success: false,
       error: data?.error || '同步失败',
+    }));
+  }
+
+  return data.results as SyncResult[];
+}
+
+// ==================== 单独同步视频 ====================
+
+/**
+ * 单独同步视频到指定站点
+ * 只更新视频 URL，不影响其他商品数据
+ */
+export async function syncVideoToSites(
+  sku: string,
+  sites: SiteKey[],
+  videoUrl: string | null
+): Promise<SyncResult[]> {
+  console.log(`🎬 同步视频 ${sku} 到 ${sites.length} 个站点`);
+
+  const { data, error } = await supabase.functions.invoke('woo-sync', {
+    body: {
+      action: 'sync-video',
+      sku,
+      sites,
+      videoUrl,
+    },
+  });
+
+  if (error) {
+    console.error('Edge Function 调用失败:', error);
+    return sites.map(site => ({
+      site,
+      success: false,
+      error: error.message || 'Edge Function 调用失败',
+    }));
+  }
+
+  if (!data?.success) {
+    return sites.map(site => ({
+      site,
+      success: false,
+      error: data?.error || '视频同步失败',
     }));
   }
 

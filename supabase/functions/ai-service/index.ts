@@ -42,7 +42,22 @@ interface GenerateContentRequest {
   model?: GeminiModel
 }
 
-type RequestBody = RecognizeAttributesRequest | GenerateContentRequest
+interface GenerateAdTemplateRequest {
+  action: 'generate-ad-template'
+  product: {
+    name: string
+    team?: string
+    season?: string
+    type?: string
+    price?: number
+    originalPrice?: number
+  }
+  aspectRatio: '1:1' | '9:16' | '1.91:1'
+  style: 'auto' | 'sport' | 'festive' | 'sale' | 'minimal' | 'retro'
+  model?: GeminiModel
+}
+
+type RequestBody = RecognizeAttributesRequest | GenerateContentRequest | GenerateAdTemplateRequest
 
 // ==================== 配置 ====================
 

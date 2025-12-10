@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Upload, Loader2, CheckCircle, XCircle, Clock, ExternalLink, Package, AlertCircle, Image, Edit2, Check } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, Save, Upload, Loader2, CheckCircle, XCircle, Clock, ExternalLink, Package, AlertCircle, Image, Edit2, Check, Palette, Video } from 'lucide-react';
 import type { SiteKey } from '../lib/types';
 import type { LocalProduct } from '../lib/products';
 import { updateProductDetails } from '../lib/products';
 import { syncProductToSites, type SyncResult, type SyncOptions } from '../lib/sync-api';
-import { ImageGallery } from './ImageGallery';
+import { MediaGallery } from './MediaGallery';
 import { SitePriceEditor } from './SitePriceEditor';
 import { SiteContentEditor } from './SiteContentEditor';
 import { SITES } from '../lib/attributes';
@@ -36,12 +37,14 @@ const SITE_URLS: Record<SiteKey, string> = {
 };
 
 export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailModalProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>('basic');
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, _setIsSyncing] = useState(false);
   const [showSyncDialog, setShowSyncDialog] = useState(false);
   const [selectedSites, setSelectedSites] = useState<SiteKey[]>([]);
   const [syncImages, setSyncImages] = useState(true);  // 是否同步图片（默认同步）
+  const [syncVideo, setSyncVideo] = useState(true);   // 是否同步视频（默认同步）
   const [syncResults, _setSyncResults] = useState<SyncResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +52,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
   const [editData, setEditData] = useState({
     name: product.name,
     images: product.images || [],
+    video_url: product.video_url || '',
     categories: product.categories || [],
     attributes: product.attributes || {},
     prices: product.prices || {},
@@ -70,10 +74,12 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
   // 图片链接复制状态
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
+
   // 检查是否有修改
   const hasChanges = JSON.stringify({
     name: product.name,
     images: product.images,
+    video_url: product.video_url || '',
     categories: product.categories,
     attributes: product.attributes,
     prices: product.prices,
@@ -128,7 +134,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
       // 分批同步：每批最多 2 个站点（避免超时）
       const BATCH_SIZE = 2;
       const sitesToSync = [...selectedSites];
-      const syncOptions: SyncOptions = { syncImages };
+      const syncOptions: SyncOptions = { syncImages, syncVideo };
       const allResults: SyncResult[] = [];
       
       // 将站点分批
@@ -739,21 +745,37 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
               <p className="text-xs sm:text-sm text-gray-500 truncate">{product.sku}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* 生成广告图按钮 */}
+            <button
+              onClick={() => {
+                onClose();
+                navigate(`/ad-creative/${product.sku}`);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-lg transition-colors"
+              title="生成广告图"
+            >
+              <Palette className="w-4 h-4" />
+              <span className="hidden sm:inline">广告图</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* 主体内容 */}
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row min-h-0">
-          {/* 左侧/顶部 - 图片区域 */}
+          {/* 左侧/顶部 - 媒体区域 */}
           <div className="h-[280px] sm:h-[320px] lg:h-auto lg:w-2/5 p-3 sm:p-4 lg:p-6 border-b lg:border-b-0 lg:border-r border-gray-200 overflow-y-auto flex-shrink-0">
-            <ImageGallery
+            <MediaGallery
               images={editData.images}
-              onChange={(images) => setEditData({ ...editData, images })}
+              videoUrl={editData.video_url}
+              onImagesChange={(images) => setEditData({ ...editData, images })}
+              onVideoChange={(video_url) => setEditData({ ...editData, video_url: video_url || '' })}
               showLinks={true}
               onCopyLink={handleCopyImageLink}
               copiedIndex={copiedIndex}
@@ -915,23 +937,46 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                 })}
               </div>
 
-              {/* 同步图片选项 */}
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={syncImages}
-                    onChange={(e) => setSyncImages(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                  />
-                  <Image className="w-4 h-4 text-gray-400" />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900 text-sm">同步图片</div>
-                    <div className="text-xs text-gray-500">
-                      {syncImages ? '将清理旧图片并上传新图片（较慢，约3-5秒/站点）' : '跳过图片同步（快速，约1-2秒/站点）'}
+              {/* 同步选项 */}
+              <div className="mb-4 space-y-2">
+                {/* 同步图片 */}
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={syncImages}
+                      onChange={(e) => setSyncImages(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    />
+                    <Image className="w-4 h-4 text-gray-400" />
+                    <div className="flex-1">
+                      <div className="font-medium text-gray-900 text-sm">同步图片</div>
+                      <div className="text-xs text-gray-500">
+                        {syncImages ? '将清理旧图片并上传新图片（较慢，约3-5秒/站点）' : '跳过图片同步'}
+                      </div>
                     </div>
+                  </label>
+                </div>
+                {/* 同步视频 */}
+                {editData.video_url && (
+                  <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={syncVideo}
+                        onChange={(e) => setSyncVideo(e.target.checked)}
+                        className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                      />
+                      <Video className="w-4 h-4 text-gray-400" />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900 text-sm">同步视频</div>
+                        <div className="text-xs text-gray-500">
+                          {syncVideo ? '将视频 URL 同步到站点' : '跳过视频同步'}
+                        </div>
+                      </div>
+                    </label>
                   </div>
-                </label>
+                )}
               </div>
 
               <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3">

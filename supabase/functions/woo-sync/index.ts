@@ -95,6 +95,12 @@ interface RegisterWebhooksRequest {
   webhookUrl: string
 }
 
+// 检查 Webhook 请求
+interface ListWebhooksRequest {
+  action: 'list-webhooks'
+  site?: SiteKey
+}
+
 // 获取单个商品完整数据（供 woo-webhook 调用）
 interface GetProductRequest {
   action: 'get-product'
@@ -174,7 +180,15 @@ interface RebuildVariationsRequest {
   sites: SiteKey[]
 }
 
-type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest
+// 单独同步视频请求
+interface SyncVideoRequest {
+  action: 'sync-video'
+  sku: string
+  sites: SiteKey[]
+  videoUrl: string | null  // null 表示清除视频
+}
+
+type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | ListWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest | SyncVideoRequest
 
 interface SyncResult {
   site: SiteKey
@@ -1002,6 +1016,7 @@ function getCategoryIdFromCache(cache: CategoryCache, site: SiteKey, name: strin
 interface SyncOptions {
   fields?: SyncField[]  // 指定要同步的字段
   syncImages?: boolean  // 兼容旧参数
+  syncVideo?: boolean   // 是否同步视频
   categoryCache?: CategoryCache  // 预加载的分类缓存
 }
 
@@ -1175,6 +1190,20 @@ async function syncSingleSite(
     }
   }
 
+  // 视频 URL 同步（通过 meta_data）- 需要 syncVideo 选项开启
+  if (options?.syncVideo && product.video_url !== undefined) {
+    updateData.meta_data = updateData.meta_data || []
+    updateData.meta_data.push({
+      key: '_product_video_url',
+      value: product.video_url || ''
+    })
+    if (product.video_url) {
+      console.log(`[${site}] 同步视频 URL: ${product.video_url.substring(0, 50)}...`)
+    } else {
+      console.log(`[${site}] 清除视频 URL`)
+    }
+  }
+
   // 如果有数据需要更新，执行更新
   if (Object.keys(updateData).length > 0) {
     await client.updateProduct(wooId, updateData)
@@ -1262,6 +1291,83 @@ async function syncSingleSite(
   }
 
   return { site, success: true }
+}
+
+// 单独同步视频到指定站点
+async function syncVideo(
+  supabase: any,
+  sku: string,
+  sites: SiteKey[],
+  videoUrl: string | null
+): Promise<SyncResult[]> {
+  console.log(`🎬 syncVideo 被调用: sku=${sku}, sites=${JSON.stringify(sites)}, videoUrl=${videoUrl}`)
+
+  // 获取商品数据获取 woo_ids
+  const { data: product, error } = await supabase
+    .from('products')
+    .select('sku, woo_ids')
+    .eq('sku', sku)
+    .single()
+
+  if (error || !product) {
+    console.error(`❌ 获取商品失败: ${error?.message || '商品不存在'}`)
+    return sites.map(site => ({ site, success: false, error: '商品不存在' }))
+  }
+
+  console.log(`📦 商品数据: woo_ids=${JSON.stringify(product.woo_ids)}`)
+
+  const wooIds = product.woo_ids || {}
+  console.log(`🎬 开始同步视频到 ${sites.length} 个站点: ${videoUrl || '(清除视频)'}`)
+
+  // 并行同步所有站点
+  const results = await Promise.all(
+    sites.map(async (site): Promise<SyncResult> => {
+      try {
+        const wooId = wooIds[site]
+        if (!wooId) {
+          return { site, success: false, error: '商品未发布到该站点' }
+        }
+
+        const { key, secret } = getWooCredentials(site)
+        if (!key || !secret) {
+          return { site, success: false, error: 'API 凭证缺失' }
+        }
+
+        const client = new WooCommerceClient(SITE_URLS[site], key, secret)
+
+        // 只更新视频 meta_data
+        await client.updateProduct(wooId, {
+          meta_data: [{
+            key: '_product_video_url',
+            value: videoUrl || ''
+          }]
+        })
+
+        console.log(`✅ [${site}] 视频同步成功`)
+        return { site, success: true }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : '同步失败'
+        console.error(`❌ [${site}] 视频同步失败: ${errorMsg}`)
+        return { site, success: false, error: errorMsg }
+      }
+    })
+  )
+
+  // 同时更新本地数据库
+  try {
+    await supabase
+      .from('products')
+      .update({ video_url: videoUrl || null })
+      .eq('sku', sku)
+    console.log(`💾 本地数据库视频 URL 已更新`)
+  } catch (err) {
+    console.warn('更新本地数据库时出错:', err)
+  }
+
+  const successCount = results.filter(r => r.success).length
+  console.log(`🏁 视频同步完成: ${successCount}/${sites.length} 成功`)
+
+  return results
 }
 
 async function syncProduct(
@@ -1770,6 +1876,48 @@ async function registerWebhooks(
         error: err instanceof Error ? err.message : 'Unknown error',
       }
       console.error(`❌ [${site}] Webhooks 注册失败:`, err)
+    }
+  }
+
+  return results
+}
+
+// ==================== 检查 Webhooks ====================
+
+async function listWebhooksForSites(site?: SiteKey): Promise<Record<SiteKey, {
+  webhooks: Array<{
+    id: number
+    name: string
+    topic: string
+    delivery_url: string
+    status: string
+  }>
+  error?: string
+}>> {
+  const sites: SiteKey[] = site ? [site] : ['com', 'uk', 'de', 'fr']
+  const results: Record<SiteKey, {
+    webhooks: Array<{
+      id: number
+      name: string
+      topic: string
+      delivery_url: string
+      status: string
+    }>
+    error?: string
+  }> = {} as any
+
+  for (const s of sites) {
+    try {
+      const client = new WooCommerceClient(s)
+      const webhooks = await client.listWebhooks()
+      results[s] = { webhooks }
+      console.log(`✅ [${s}] 找到 ${webhooks.length} 个 Webhooks`)
+    } catch (err) {
+      results[s] = {
+        webhooks: [],
+        error: err instanceof Error ? err.message : 'Unknown error',
+      }
+      console.error(`❌ [${s}] 获取 Webhooks 失败:`, err)
     }
   }
 
@@ -2426,6 +2574,15 @@ Deno.serve(async (req) => {
         })
       }
 
+      case 'sync-video': {
+        const videoBody = body as SyncVideoRequest
+        console.log(`📹 sync-video 请求: sku=${videoBody.sku}, sites=${JSON.stringify(videoBody.sites)}, videoUrl=${videoBody.videoUrl?.substring(0, 50)}`)
+        const results = await syncVideo(supabase, videoBody.sku, videoBody.sites, videoBody.videoUrl)
+        return new Response(JSON.stringify({ success: true, results }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
       case 'sync-products-batch': {
         const results = await syncProductsBatch(supabase, body.skus, body.sites, body.options)
         return new Response(JSON.stringify({ success: true, results }), {
@@ -2442,6 +2599,13 @@ Deno.serve(async (req) => {
 
       case 'register-webhooks': {
         const results = await registerWebhooks(body.webhookUrl)
+        return new Response(JSON.stringify({ success: true, results }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      case 'list-webhooks': {
+        const results = await listWebhooksForSites(body.site)
         return new Response(JSON.stringify({ success: true, results }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })

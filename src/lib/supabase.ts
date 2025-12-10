@@ -190,6 +190,30 @@ export async function transferImageToStorage(
   return data.url;
 }
 
+/**
+ * 转存视频到 Supabase Storage
+ * 通过 Edge Function 服务端转存，避免 CORS 问题
+ */
+export async function transferVideoToStorage(
+  videoUrl: string,
+  sku: string
+): Promise<{ url: string; size: number }> {
+  const { data, error } = await supabase.functions.invoke('transfer-video', {
+    body: { videoUrl, sku }
+  });
+
+  if (error) {
+    console.error('Transfer video error:', error);
+    throw new Error(`转存失败: ${error.message}`);
+  }
+
+  if (!data.success) {
+    throw new Error(data.error || '转存失败');
+  }
+
+  return { url: data.url, size: data.size };
+}
+
 // ==================== 图片迁移 API ====================
 
 export interface ImageMigrationStats {

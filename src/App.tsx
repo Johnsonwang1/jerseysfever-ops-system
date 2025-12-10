@@ -10,6 +10,8 @@ import { Toaster } from '@/components/ui/sonner';
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then(m => ({ default: m.ProductsPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const AdCreativeListPage = lazy(() => import('./pages/AdCreativeListPage').then(m => ({ default: m.AdCreativeListPage })));
+const AdCreativePage = lazy(() => import('./pages/AdCreativePage').then(m => ({ default: m.AdCreativePage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then(m => ({ default: m.UsersPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -65,6 +67,10 @@ function AppRoutes() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
+          <Route path="ad-creative" element={<AdCreativeListPage />} />
+          <Route path="ad-creative/new" element={<AdCreativePage />} />
+          <Route path="ad-creative/new/:sku" element={<AdCreativePage />} />
+          <Route path="ad-creative/:id" element={<AdCreativePage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
