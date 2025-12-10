@@ -3,13 +3,15 @@ import { Package, Users, LogOut, ChevronDown, Menu, X, ShoppingCart, BarChart3, 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
 
+// 角色权限配置：指定每个导航项允许哪些角色访问
+// admin: 管理员, editor: 编辑员, viewer: 观察员
 const navItems = [
-  { to: '/products', label: '商品管理', icon: Package },
-  { to: '/orders', label: '订单管理', icon: ShoppingCart },
-  { to: '/analytics', label: '数据分析', icon: BarChart3 },
-  { to: '/ad-creative', label: '广告图设计', icon: Palette },
-  { to: '/users', label: '用户管理', icon: Users, adminOnly: true },
-  { to: '/settings', label: '设置', icon: Settings },
+  { to: '/products', label: '商品管理', icon: Package, roles: ['admin', 'editor', 'viewer'] },
+  { to: '/orders', label: '订单管理', icon: ShoppingCart, roles: ['admin', 'editor', 'viewer'] },
+  { to: '/analytics', label: '数据分析', icon: BarChart3, roles: ['admin'] },
+  { to: '/ad-creative', label: '广告图设计', icon: Palette, roles: ['admin'] },
+  { to: '/users', label: '用户管理', icon: Users, roles: ['admin'] },
+  { to: '/settings', label: '设置', icon: Settings, roles: ['admin'] },
 ];
 
 export function Layout() {
@@ -39,8 +41,9 @@ export function Layout() {
     await signOut();
   };
 
-  // 过滤导航项（非管理员不显示管理员专属菜单）
-  const visibleNavItems = navItems.filter(item => !item.adminOnly || isAdmin);
+  // 根据用户角色过滤导航项
+  const userRole = profile?.role || 'viewer';
+  const visibleNavItems = navItems.filter(item => item.roles.includes(userRole));
 
   return (
     <div className="h-screen bg-gray-50 flex overflow-hidden">

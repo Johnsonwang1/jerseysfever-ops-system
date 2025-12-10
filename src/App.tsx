@@ -38,6 +38,25 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// 基于角色的路由保护组件
+function RoleProtectedRoute({ 
+  children, 
+  allowedRoles 
+}: { 
+  children: React.ReactNode;
+  allowedRoles: string[];
+}) {
+  const { profile } = useAuth();
+  const userRole = profile?.role || 'viewer';
+
+  // 如果用户角色不在允许列表中，重定向到商品页面
+  if (!allowedRoles.includes(userRole)) {
+    return <Navigate to="/products" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 // 页面加载时的 Loading 组件
 function PageLoader() {
   return (
@@ -64,15 +83,17 @@ function AppRoutes() {
           }
         >
           <Route index element={<Navigate to="/products" replace />} />
+          {/* 所有角色可访问 */}
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
-          <Route path="analytics" element={<AnalyticsPage />} />
-          <Route path="ad-creative" element={<AdCreativeListPage />} />
-          <Route path="ad-creative/new" element={<AdCreativePage />} />
-          <Route path="ad-creative/new/:sku" element={<AdCreativePage />} />
-          <Route path="ad-creative/:id" element={<AdCreativePage />} />
-          <Route path="users" element={<UsersPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          {/* 仅管理员可访问 */}
+          <Route path="analytics" element={<RoleProtectedRoute allowedRoles={['admin']}><AnalyticsPage /></RoleProtectedRoute>} />
+          <Route path="ad-creative" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativeListPage /></RoleProtectedRoute>} />
+          <Route path="ad-creative/new" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativePage /></RoleProtectedRoute>} />
+          <Route path="ad-creative/new/:sku" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativePage /></RoleProtectedRoute>} />
+          <Route path="ad-creative/:id" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativePage /></RoleProtectedRoute>} />
+          <Route path="users" element={<RoleProtectedRoute allowedRoles={['admin']}><UsersPage /></RoleProtectedRoute>} />
+          <Route path="settings" element={<RoleProtectedRoute allowedRoles={['admin']}><SettingsPage /></RoleProtectedRoute>} />
         </Route>
 
         {/* 未匹配路由重定向到首页 */}
