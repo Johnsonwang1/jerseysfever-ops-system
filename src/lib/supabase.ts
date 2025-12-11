@@ -191,6 +191,37 @@ export async function transferImageToStorage(
 }
 
 /**
+ * 直接上传视频文件到 Supabase Storage
+ */
+export async function uploadVideoToStorage(
+  file: File,
+  sku: string
+): Promise<{ url: string; size: number }> {
+  // 生成唯一文件路径
+  const ext = file.name.split('.').pop() || 'mp4';
+  const filePath = `videos/${sku}/${Date.now()}.${ext}`;
+
+  // 上传到 Supabase Storage
+  const { data, error } = await supabase.storage
+    .from('product-images')
+    .upload(filePath, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`上传视频失败: ${error.message}`);
+  }
+
+  // 获取公开 URL
+  const { data: urlData } = supabase.storage
+    .from('product-images')
+    .getPublicUrl(data.path);
+
+  return { url: urlData.publicUrl, size: file.size };
+}
+
+/**
  * 转存视频到 Supabase Storage
  * 通过 Edge Function 服务端转存，避免 CORS 问题
  */

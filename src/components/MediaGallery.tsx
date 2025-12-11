@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Plus, GripVertical, Image as ImageIcon, Loader2, ZoomIn, Trash2, Copy, CheckCircle2, Sparkles, Video, Link, Play, Pause, Volume2, VolumeX, ArrowDownToLine } from 'lucide-react';
-import { uploadImageToStorage, transferVideoToStorage } from '../lib/supabase';
+import { uploadImageToStorage, transferVideoToStorage, uploadVideoToStorage } from '../lib/supabase';
 import { ImageLightbox } from './ImageLightbox';
 import { AIImageModal } from './AIImageModal';
 
@@ -136,12 +136,15 @@ export function MediaGallery({
             throw new Error(`视频 ${file.name} 过大，最大支持 50MB`);
           }
 
-          // 读取为 base64 并上传
-          // 由于视频文件较大，这里使用 URL.createObjectURL 先预览
-          // 实际上传交给用户确认后再转存
-          const localUrl = URL.createObjectURL(file);
-          onVideoChange(localUrl);
+          // 直接上传到 Supabase Storage（自动转存）
+          if (!sku) {
+            throw new Error('需要 SKU 才能上传视频');
+          }
+          const result = await uploadVideoToStorage(file, sku);
+          onVideoChange(result.url);
           setSelectedIndex(0); // 选中视频
+          const sizeMB = (result.size / 1024 / 1024).toFixed(2);
+          console.log(`✅ 视频已上传: ${sizeMB}MB`);
         } else {
           // 图片处理
           const reader = new FileReader();
