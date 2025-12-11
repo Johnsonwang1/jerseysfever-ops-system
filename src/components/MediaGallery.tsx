@@ -184,15 +184,44 @@ export function MediaGallery({
     const url = urlInputValue.trim();
     const isVideo = urlInputType === 'video' || (urlInputType === 'auto' && isVideoUrl(url));
 
+    setUrlInputValue('');
+    setShowUrlInput(false);
+
     if (isVideo) {
-      onVideoChange(url);
-      setSelectedIndex(0);
+      // 视频 URL 自动转存到 Storage
+      if (!sku) {
+        setUploadError('需要 SKU 才能转存视频');
+        return;
+      }
+      
+      // 如果已经是 Storage URL，直接使用
+      if (isStorageUrl(url)) {
+        onVideoChange(url);
+        setSelectedIndex(0);
+        return;
+      }
+
+      // 转存到 Storage
+      setTransferring(true);
+      setUploadError(null);
+      try {
+        const result = await transferVideoToStorage(url, sku);
+        onVideoChange(result.url);
+        setSelectedIndex(0);
+        const sizeMB = (result.size / 1024 / 1024).toFixed(2);
+        console.log(`✅ 视频已转存: ${sizeMB}MB`);
+      } catch (err) {
+        console.error('Transfer video failed:', err);
+        setUploadError(err instanceof Error ? err.message : '转存失败');
+        // 转存失败时使用原始 URL
+        onVideoChange(url);
+        setSelectedIndex(0);
+      } finally {
+        setTransferring(false);
+      }
     } else {
       onImagesChange([...images, url]);
     }
-
-    setUrlInputValue('');
-    setShowUrlInput(false);
   };
 
   // 转存视频到 Storage
