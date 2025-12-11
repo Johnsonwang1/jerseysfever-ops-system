@@ -15,7 +15,7 @@ const navItems = [
 ];
 
 export function Layout() {
-  const { profile, signOut, isAdmin } = useAuth();
+  const { profile, signOut } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
