@@ -108,15 +108,26 @@ export function SalesAnalyticsTab() {
     );
   };
 
-  // 点击商品打开详情
+  // 点击商品打开详情（支持变体 SKU 自动关联到父商品）
   const handleProductClick = async (sku: string) => {
     try {
       setLoadingProduct(true);
-      const product = await getProductBySku(sku);
+      
+      // 1. 先尝试原始 SKU
+      let product = await getProductBySku(sku);
+      
+      // 2. 如果找不到，尝试去掉尺码后缀（如 -M, -L, -XL, -2XL 等）
+      if (!product) {
+        const parentSku = sku.replace(/-(?:XS|S|M|L|XL|2XL|3XL|4XL|XXL|XXXL)$/i, '');
+        if (parentSku !== sku) {
+          product = await getProductBySku(parentSku);
+        }
+      }
+      
       if (product) {
         setSelectedProduct(product);
       } else {
-        alert('商品不存在');
+        alert(`商品不存在: ${sku}`);
       }
     } catch (err) {
       console.error('加载商品失败:', err);
