@@ -60,8 +60,10 @@ export function MediaGallery({
   const [transferring, setTransferring] = useState(false);
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoPlaying, setVideoPlaying] = useState(true);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
   // 构建媒体列表：视频在前，图片在后
   const mediaItems: MediaItem[] = [
@@ -303,12 +305,110 @@ export function MediaGallery({
     }
   };
 
+  // 拖拽上传处理
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!editable) return;
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 确保是离开整个区域，而不是进入子元素
+    if (dropZoneRef.current && !dropZoneRef.current.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDragOverDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    
+    if (!editable) return;
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    // 复用现有上传逻辑
+    setUploading(true);
+    setUploadError(null);
+    const newImages: string[] = [];
+
+    try {
+      for (const file of Array.from(files)) {
+        const isVideo = file.type.startsWith('video/');
+
+        if (isVideo) {
+          if (file.size > 50 * 1024 * 1024) {
+            throw new Error(`视频 ${file.name} 过大，最大支持 50MB`);
+          }
+          if (!sku) {
+            throw new Error('需要 SKU 才能上传视频');
+          }
+          const result = await uploadVideoToStorage(file, sku);
+          onVideoChange(result.url);
+          setSelectedIndex(0);
+          const sizeMB = (result.size / 1024 / 1024).toFixed(2);
+          console.log(`✅ 视频已上传: ${sizeMB}MB`);
+        } else if (file.type.startsWith('image/')) {
+          const reader = new FileReader();
+          const base64Data = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => {
+              const result = reader.result as string;
+              const base64 = result.split(',')[1];
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          const publicUrl = await uploadImageToStorage(base64Data, file.name);
+          newImages.push(publicUrl);
+        }
+      }
+
+      if (newImages.length > 0) {
+        onImagesChange([...images, ...newImages]);
+      }
+    } catch (err) {
+      console.error('Upload failed:', err);
+      setUploadError(err instanceof Error ? err.message : '上传失败');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   // 获取 lightbox 图片列表（仅图片）
   const lightboxImages = images;
   const lightboxIndex = selectedIndex - (hasVideo ? 1 : 0);
 
   return (
-    <div className="flex flex-col h-full">
+    <div 
+      ref={dropZoneRef}
+      className="flex flex-col h-full relative"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOverDrop}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* 拖拽上传遮罩 */}
+      {isDragOver && editable && (
+        <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm rounded-xl border-2 border-dashed border-blue-500 flex items-center justify-center">
+          <div className="text-center">
+            <ArrowDownToLine className="w-12 h-12 text-blue-600 mx-auto mb-2" />
+            <p className="text-lg font-medium text-blue-700">拖放文件到这里上传</p>
+            <p className="text-sm text-blue-600">支持图片和视频</p>
+          </div>
+        </div>
+      )}
+
       {/* 主预览区 */}
       <div
         className={`flex-1 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl overflow-hidden mb-4 sm:mb-5 flex items-center justify-center min-h-[300px] sm:min-h-[350px] relative group shadow-inner ${
