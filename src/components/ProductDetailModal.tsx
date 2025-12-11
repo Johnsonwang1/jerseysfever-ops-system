@@ -48,6 +48,24 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
   const [syncResults, _setSyncResults] = useState<SyncResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // 计算初始原价：如果没有原价或原价<=现价，则设为现价的2倍
+  const getInitialRegularPrices = () => {
+    const prices = product.prices || {};
+    const regularPrices = product.regular_prices || {};
+    const result: Partial<Record<SiteKey, number>> = { ...regularPrices };
+    
+    (Object.keys(prices) as SiteKey[]).forEach((site) => {
+      const salePrice = prices[site];
+      const regularPrice = regularPrices[site];
+      // 如果没有原价或原价<=现价，自动设为现价的2倍
+      if (salePrice && (!regularPrice || regularPrice <= salePrice)) {
+        result[site] = Math.round(salePrice * 2 * 100) / 100;
+      }
+    });
+    
+    return result;
+  };
+
   // 编辑状态 - 使用新的 JSONB 结构
   const [editData, setEditData] = useState({
     name: product.name,
@@ -56,7 +74,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
     categories: product.categories || [],
     attributes: product.attributes || {},
     prices: product.prices || {},
-    regular_prices: product.regular_prices || {},
+    regular_prices: getInitialRegularPrices(),
     stock_quantities: product.stock_quantities || {},
     stock_statuses: product.stock_statuses || {},
     statuses: product.statuses || {},

@@ -33,9 +33,11 @@ export function SitePriceEditor({
   const handlePriceChange = (site: SiteKey, value: string) => {
     const sanitized = value.replace(/[^0-9.]/g, '');
     const numValue = parseFloat(sanitized) || 0;
+    // 自动设置原价为现价的2倍
+    const autoRegularPrice = Math.round(numValue * 2 * 100) / 100;
     onChange(
       { ...prices, [site]: numValue },
-      regularPrices
+      { ...regularPrices, [site]: autoRegularPrice }
     );
   };
 
@@ -51,16 +53,15 @@ export function SitePriceEditor({
   // 批量设置所有站点价格
   const setAllPrices = (saleValue: string, regularValue: string) => {
     const saleNum = parseFloat(saleValue) || 0;
-    const regularNum = parseFloat(regularValue) || 0;
+    // 如果没有输入原价，默认使用现价的2倍
+    const regularNum = parseFloat(regularValue) || Math.round(saleNum * 2 * 100) / 100;
     
     const newPrices: Partial<Record<SiteKey, number>> = {};
     const newRegularPrices: Partial<Record<SiteKey, number>> = {};
     
     SITE_CONFIG.forEach(site => {
       newPrices[site.key] = saleNum;
-      if (regularNum > 0) {
-        newRegularPrices[site.key] = regularNum;
-      }
+      newRegularPrices[site.key] = regularNum;
     });
     
     onChange(newPrices, newRegularPrices);
@@ -109,7 +110,7 @@ export function SitePriceEditor({
           </button>
         </div>
         <div className="text-xs text-gray-500 mt-2">
-          提示：原价留空则无划线效果，原价需大于促销价才会显示划线
+          提示：原价留空则自动设为现价的2倍，原价需大于促销价才会显示划线
         </div>
       </div>
 
@@ -206,6 +207,7 @@ export function SitePriceEditor({
         <ul className="list-disc list-inside mt-1 space-y-0.5">
           <li>各站点价格独立设置，同步时将使用对应站点的价格更新 WooCommerce</li>
           <li>如果某站点价格为空，同步时将使用主站（.com）价格</li>
+          <li>输入现价时，原价自动设为现价的2倍（可手动修改）</li>
           <li>原价需大于促销价才会显示划线效果</li>
         </ul>
       </div>

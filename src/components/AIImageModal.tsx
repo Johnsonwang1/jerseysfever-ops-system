@@ -666,12 +666,25 @@ export function AIImageModal({ sku, images, initialIndex, onClose, onUpdateImage
                           <span className="text-xs text-purple-500">提交中...</span>
                         )}
                       </div>
-                      <button
-                        onClick={() => handleDeleteTask(task)}
-                        className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {/* 重新生成按钮 - 仅在完成且有结果时显示 */}
+                        {task.status === 'completed' && task.result_url && !task.result_url.includes('storage.googleapis.com') && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleRetryTask(task); }}
+                            className="p-1 text-gray-400 hover:text-purple-500 rounded transition-colors"
+                            title="重新生成"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteTask(task)}
+                          className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                          title="删除"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
 
                     {/* 对比图 */}
@@ -722,31 +735,22 @@ export function AIImageModal({ sku, images, initialIndex, onClose, onUpdateImage
                             转存到 Supabase
                           </button>
                         ) : (
-                          <>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleApplySingle(task); }}
-                                className="flex-1 py-1.5 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600 flex items-center justify-center gap-1"
-                              >
-                                <Replace className="w-3 h-3" />
-                                替换
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleAddSingle(task); }}
-                                className="flex-1 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center justify-center gap-1"
-                              >
-                                <ImagePlus className="w-3 h-3" />
-                                添加
-                              </button>
-                            </div>
+                          <div className="flex gap-2">
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleRetryTask(task); }}
-                              className="w-full py-1.5 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 flex items-center justify-center gap-1"
+                              onClick={(e) => { e.stopPropagation(); handleApplySingle(task); }}
+                              className="flex-1 py-1.5 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600 flex items-center justify-center gap-1"
                             >
-                              <RefreshCw className="w-3 h-3" />
-                              不满意？重新生成
+                              <Replace className="w-3 h-3" />
+                              替换
                             </button>
-                          </>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleAddSingle(task); }}
+                              className="flex-1 py-1.5 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center justify-center gap-1"
+                            >
+                              <ImagePlus className="w-3 h-3" />
+                              添加
+                            </button>
+                          </div>
                         )}
                       </div>
                     )}
