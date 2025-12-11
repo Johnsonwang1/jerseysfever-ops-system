@@ -131,6 +131,22 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
     }
   };
 
+  // AI 添加图片后自动保存
+  const handleImagesChangeWithAutoSave = async (images: string[]) => {
+    const newEditData = { ...editData, images };
+    setEditData(newEditData);
+    
+    // 自动保存到数据库
+    try {
+      const updated = await updateProductDetails(product.sku, newEditData);
+      onSaved?.(updated);
+      console.log('✅ AI 图片已自动保存');
+    } catch (err) {
+      console.error('❌ 自动保存失败:', err);
+      setError(err instanceof Error ? err.message : '自动保存失败');
+    }
+  };
+
   // 同步到站点（异步执行，立即关闭窗口）
   // 分批同步避免超时：每批最多 2 个站点
   const handleSync = async () => {
@@ -792,7 +808,7 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
             <MediaGallery
               images={editData.images}
               videoUrl={editData.video_url}
-              onImagesChange={(images) => setEditData({ ...editData, images })}
+              onImagesChange={handleImagesChangeWithAutoSave}
               onVideoChange={(video_url) => setEditData({ ...editData, video_url: video_url || '' })}
               showLinks={true}
               onCopyLink={handleCopyImageLink}
