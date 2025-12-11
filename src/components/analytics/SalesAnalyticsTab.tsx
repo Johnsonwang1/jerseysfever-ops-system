@@ -18,14 +18,9 @@ const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr'];
 export function SalesAnalyticsTab() {
   // 日期工具函数
   const getToday = () => new Date().toISOString().split('T')[0];
-  const getDaysAgo = (days: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() - days);
-    return d.toISOString().split('T')[0];
-  };
 
-  // 状态 - 默认显示近7天
-  const [dateFrom, setDateFrom] = useState(getDaysAgo(6));
+  // 状态 - 默认显示今天
+  const [dateFrom, setDateFrom] = useState(getToday);
   const [dateTo, setDateTo] = useState(getToday);
   const [selectedSites, setSelectedSites] = useState<SiteKey[]>([]);
   const [showAllProducts, setShowAllProducts] = useState(false);

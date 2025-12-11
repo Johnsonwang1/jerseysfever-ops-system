@@ -145,13 +145,9 @@ function HighlightCard({ icon, label, value, subtitle, formula, gradient }: High
 
 export function AdsAnalyticsTab() {
   const getToday = () => new Date().toISOString().split('T')[0];
-  const getDaysAgo = (days: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() - days);
-    return d.toISOString().split('T')[0];
-  };
 
-  const [dateFrom, setDateFrom] = useState(getDaysAgo(6));
+  // 默认显示今天
+  const [dateFrom, setDateFrom] = useState(getToday);
   const [dateTo, setDateTo] = useState(getToday);
   const [activeAccountTab, setActiveAccountTab] = useState<AccountTab>('all');
 
