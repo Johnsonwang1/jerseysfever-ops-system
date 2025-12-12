@@ -17,6 +17,7 @@ import {
   getImageContext,
   generateMultipleImages,
 } from '@/lib/ad-creative/ai-chat';
+import { uploadImageToStorage } from '@/lib/supabase';
 
 // 生成唯一 ID
 function generateId(): string {
@@ -24,12 +25,12 @@ function generateId(): string {
 }
 
 interface UseAIChatOptions {
-  product: AdProductContext | null;
+  products: AdProductContext[];
   aspectRatio: AdAspectRatio;
   onImageSelect?: (imageUrl: string) => void;
 }
 
-export function useAIChat({ product, aspectRatio, onImageSelect }: UseAIChatOptions) {
+export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOptions) {
   // 对话消息列表
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -43,8 +44,8 @@ export function useAIChat({ product, aspectRatio, onImageSelect }: UseAIChatOpti
   // AI 上下文设置
   const [aiContext, setAIContext] = useState<AIContext>(DEFAULT_AI_CONTEXT);
 
-  // AI 模型选择
-  const [model, setModel] = useState<AIModelId>('gemini-2.5-flash-image');
+  // AI 模型选择 - 默认使用 Gemini 3 Pro
+  const [model, setModel] = useState<AIModelId>('gemini-3-pro-image-preview');
 
   // 生成状态
   const [isGenerating, setIsGenerating] = useState(false);
@@ -85,33 +86,61 @@ export function useAIChat({ product, aspectRatio, onImageSelect }: UseAIChatOpti
     setIsGenerating(true);
 
     try {
-      // 构建 prompt
+      // 构建 prompt（支持多商品）
       const prompt = buildPrompt(
         content,
-        product,
+        products,
         aiContext,
         conversationHistoryRef.current
       );
 
-      // 获取图片上下文
-      let images = getImageContext(product, aiContext);
-
-      // 添加用户上传的参考图片
+      // 用户上传的参考图片：先转存到 Storage 获取 URL
+      let uploadedUrls: string[] = [];
       if (uploadedImages && uploadedImages.length > 0) {
-        images = [...images, ...uploadedImages];
+        console.log('Uploading user images to Storage...');
+        for (let i = 0; i < uploadedImages.length; i++) {
+          const base64 = uploadedImages[i];
+          // 移除 data:image/xxx;base64, 前缀
+          const base64Data = base64.replace(/^data:image\/\w+;base64,/, '');
+          const filename = `ad-ref-${Date.now()}-${i}.png`;
+          try {
+            const url = await uploadImageToStorage(base64Data, filename);
+            console.log('Uploaded image URL:', url);
+            uploadedUrls.push(url);
+          } catch (err) {
+            console.error('Failed to upload image:', err);
+          }
+        }
       }
 
-      // 如果有选中的图片用于迭代修改，添加到输入
+      // 构建图片数组，顺序：
+      // 1. 选中的图片（基于此图修改）
+      // 2. 用户上传的参考图片（紧跟选中图片）
+      // 3. 商品图片
+      // 4. Logo
+      let images: string[] = [];
+
+      // 如果有选中的图片用于迭代修改
       if (selectedImageUrl) {
-        images = [selectedImageUrl, ...images];
+        images.push(selectedImageUrl);
       }
+
+      // 用户上传的参考图片紧跟在后面
+      if (uploadedUrls.length > 0) {
+        images = [...images, ...uploadedUrls];
+      }
+
+      // 商品图片
+      const productImages = getImageContext(products, aiContext);
+      images = [...images, ...productImages];
 
       // 如果勾选了 Logo，添加 Logo 图片
       if (aiContext.includeLogo) {
-        // Logo 的完整 URL
         const logoUrl = `${window.location.origin}/logo.png`;
-        images = [...images, logoUrl];
+        images.push(logoUrl);
       }
+
+      console.log('Final images array:', images);
 
       // 生成多张图片
       const generatedImages = await generateMultipleImages(
@@ -163,7 +192,7 @@ export function useAIChat({ product, aspectRatio, onImageSelect }: UseAIChatOpti
     } finally {
       setIsGenerating(false);
     }
-  }, [product, aspectRatio, aiContext, model, isGenerating, selectedImageUrl]);
+  }, [products, aspectRatio, aiContext, model, isGenerating, selectedImageUrl]);
 
   // 选择图片（标记选中状态）
   const selectImage = useCallback((messageId: string, imageId: string) => {

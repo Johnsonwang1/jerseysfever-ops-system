@@ -16,14 +16,17 @@ interface CampaignTableProps {
 function CampaignDailyRow({ data }: { data: CampaignDailyData }) {
   return (
     <tr className="bg-gray-50/50 border-l-4 border-purple-200">
+      {/* 日期 */}
       <td className="px-4 py-2">
         <div className="pl-8 text-sm text-gray-600">
           {data.date}
         </div>
       </td>
+      {/* 花费 */}
       <td className="px-3 py-2 text-right text-sm text-gray-600">
         {formatCurrency(data.spend)}
       </td>
+      {/* ROAS */}
       <td className="px-3 py-2 text-right">
         <span className={`text-sm ${
           data.roas >= 2 ? 'text-emerald-600' :
@@ -34,11 +37,25 @@ function CampaignDailyRow({ data }: { data: CampaignDailyData }) {
           {data.roas > 0 ? `${data.roas.toFixed(2)}x` : '-'}
         </span>
       </td>
+      {/* CPM */}
+      <td className="px-3 py-2 text-right text-sm text-gray-600">
+        {data.cpm > 0 ? formatCurrency(data.cpm) : '-'}
+      </td>
+      {/* CPC */}
+      <td className="px-3 py-2 text-right text-sm text-gray-600">
+        {formatCurrency(data.cpc)}
+      </td>
+      {/* CTR */}
       <td className="px-3 py-2 text-right text-sm">
-        <span className={data.purchases > 0 ? 'text-emerald-600' : 'text-gray-400'}>
-          {data.purchases || '-'}
+        <span className={`${
+          data.ctr >= 3 ? 'text-emerald-600' :
+          data.ctr >= 1 ? 'text-gray-600' :
+          'text-red-500'
+        }`}>
+          {formatPercent(data.ctr)}
         </span>
       </td>
+      {/* CVR */}
       <td className="px-3 py-2 text-right text-sm">
         <span className={`${
           data.cvr >= 2 ? 'text-emerald-600' :
@@ -49,9 +66,7 @@ function CampaignDailyRow({ data }: { data: CampaignDailyData }) {
           {data.cvr > 0 ? formatPercent(data.cvr) : '-'}
         </span>
       </td>
-      <td className="px-3 py-2 text-right text-sm text-gray-600">
-        {data.add_to_cart || '-'}
-      </td>
+      {/* 加购率 */}
       <td className="px-3 py-2 text-right text-sm">
         <span className={`${
           data.add_to_cart_rate >= 5 ? 'text-emerald-600' :
@@ -62,9 +77,7 @@ function CampaignDailyRow({ data }: { data: CampaignDailyData }) {
           {data.add_to_cart_rate > 0 ? formatPercent(data.add_to_cart_rate) : '-'}
         </span>
       </td>
-      <td className="px-3 py-2 text-right text-sm text-gray-600">
-        {data.initiate_checkout || '-'}
-      </td>
+      {/* 结算率 */}
       <td className="px-3 py-2 text-right text-sm">
         <span className={`${
           data.checkout_rate >= 50 ? 'text-emerald-600' :
@@ -75,20 +88,27 @@ function CampaignDailyRow({ data }: { data: CampaignDailyData }) {
           {data.checkout_rate > 0 ? formatPercent(data.checkout_rate) : '-'}
         </span>
       </td>
+      {/* 购买 */}
+      <td className="px-3 py-2 text-right text-sm">
+        <span className={data.purchases > 0 ? 'text-emerald-600' : 'text-gray-400'}>
+          {data.purchases || '-'}
+        </span>
+      </td>
+      {/* 加购 */}
+      <td className="px-3 py-2 text-right text-sm text-gray-600">
+        {data.add_to_cart || '-'}
+      </td>
+      {/* 结算 */}
+      <td className="px-3 py-2 text-right text-sm text-gray-600">
+        {data.initiate_checkout || '-'}
+      </td>
+      {/* 点击 */}
       <td className="px-3 py-2 text-right text-sm text-gray-600">
         {formatNumber(data.clicks)}
       </td>
-      <td className="px-3 py-2 text-right text-sm">
-        <span className={`${
-          data.ctr >= 3 ? 'text-emerald-600' :
-          data.ctr >= 1 ? 'text-gray-600' :
-          'text-red-500'
-        }`}>
-          {formatPercent(data.ctr)}
-        </span>
-      </td>
+      {/* 展示 */}
       <td className="px-3 py-2 text-right text-sm text-gray-600">
-        {formatCurrency(data.cpc)}
+        {formatNumber(data.impressions)}
       </td>
     </tr>
   );
@@ -113,7 +133,7 @@ function ExpandedDailyData({
   if (isLoading) {
     return (
       <tr className="bg-gray-50/50">
-        <td colSpan={12} className="px-4 py-4 text-center">
+        <td colSpan={14} className="px-4 py-4 text-center">
           <div className="flex items-center justify-center gap-2 text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />
             加载每日数据...
@@ -126,7 +146,7 @@ function ExpandedDailyData({
   if (isError || !dailyData?.length) {
     return (
       <tr className="bg-gray-50/50">
-        <td colSpan={12} className="px-4 py-4 text-center text-gray-400 text-sm">
+        <td colSpan={14} className="px-4 py-4 text-center text-gray-400 text-sm">
           暂无每日数据
         </td>
       </tr>
@@ -169,38 +189,47 @@ export function CampaignTable({ campaigns, dateFrom, dateTo }: CampaignTableProp
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
                 Campaign 名称
               </th>
+              {/* 花费 */}
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
                 花费
               </th>
+              {/* 计算度量值 */}
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
                 ROAS
               </th>
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                购买
+                CPM
               </th>
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                CVR
-              </th>
-              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                加购
-              </th>
-              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                加购率
-              </th>
-              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                结算
-              </th>
-              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                结算率
-              </th>
-              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                点击
+                CPC
               </th>
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
                 CTR
               </th>
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
-                CPC
+                CVR
+              </th>
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                加购率
+              </th>
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                结算率
+              </th>
+              {/* 绝对值 */}
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                购买
+              </th>
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                加购
+              </th>
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                结算
+              </th>
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                点击
+              </th>
+              <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                展示
               </th>
             </tr>
           </thead>
@@ -237,9 +266,11 @@ export function CampaignTable({ campaigns, dateFrom, dateTo }: CampaignTableProp
                         </div>
                       </div>
                     </td>
+                    {/* 花费 */}
                     <td className="px-3 py-3 text-right font-medium text-purple-600 text-sm">
                       {formatCurrency(campaign.spend)}
                     </td>
+                    {/* ROAS */}
                     <td className="px-3 py-3 text-right">
                       <span className={`font-semibold text-sm ${
                         campaign.roas >= 2 ? 'text-emerald-600' :
@@ -250,11 +281,25 @@ export function CampaignTable({ campaigns, dateFrom, dateTo }: CampaignTableProp
                         {campaign.roas > 0 ? `${campaign.roas.toFixed(2)}x` : '-'}
                       </span>
                     </td>
+                    {/* CPM */}
+                    <td className="px-3 py-3 text-right text-sm text-gray-600">
+                      {campaign.cpm > 0 ? formatCurrency(campaign.cpm) : '-'}
+                    </td>
+                    {/* CPC */}
+                    <td className="px-3 py-3 text-right text-sm text-gray-600">
+                      {formatCurrency(campaign.cpc)}
+                    </td>
+                    {/* CTR */}
                     <td className="px-3 py-3 text-right text-sm">
-                      <span className={campaign.purchases > 0 ? 'text-emerald-600 font-medium' : 'text-gray-400'}>
-                        {campaign.purchases || '-'}
+                      <span className={`${
+                        campaign.ctr >= 3 ? 'text-emerald-600' :
+                        campaign.ctr >= 1 ? 'text-gray-600' :
+                        'text-red-500'
+                      }`}>
+                        {formatPercent(campaign.ctr)}
                       </span>
                     </td>
+                    {/* CVR */}
                     <td className="px-3 py-3 text-right text-sm">
                       <span className={`${
                         campaign.cvr >= 2 ? 'text-emerald-600' :
@@ -265,9 +310,7 @@ export function CampaignTable({ campaigns, dateFrom, dateTo }: CampaignTableProp
                         {campaign.cvr > 0 ? formatPercent(campaign.cvr) : '-'}
                       </span>
                     </td>
-                    <td className="px-3 py-3 text-right text-sm text-gray-600">
-                      {campaign.add_to_cart || '-'}
-                    </td>
+                    {/* 加购率 */}
                     <td className="px-3 py-3 text-right text-sm">
                       <span className={`${
                         campaign.add_to_cart_rate >= 5 ? 'text-emerald-600' :
@@ -278,9 +321,7 @@ export function CampaignTable({ campaigns, dateFrom, dateTo }: CampaignTableProp
                         {campaign.add_to_cart_rate > 0 ? formatPercent(campaign.add_to_cart_rate) : '-'}
                       </span>
                     </td>
-                    <td className="px-3 py-3 text-right text-sm text-gray-600">
-                      {campaign.initiate_checkout || '-'}
-                    </td>
+                    {/* 结算率 */}
                     <td className="px-3 py-3 text-right text-sm">
                       <span className={`${
                         campaign.checkout_rate >= 50 ? 'text-emerald-600' :
@@ -291,20 +332,27 @@ export function CampaignTable({ campaigns, dateFrom, dateTo }: CampaignTableProp
                         {campaign.checkout_rate > 0 ? formatPercent(campaign.checkout_rate) : '-'}
                       </span>
                     </td>
+                    {/* 购买 */}
+                    <td className="px-3 py-3 text-right text-sm">
+                      <span className={campaign.purchases > 0 ? 'text-emerald-600 font-medium' : 'text-gray-400'}>
+                        {campaign.purchases || '-'}
+                      </span>
+                    </td>
+                    {/* 加购 */}
+                    <td className="px-3 py-3 text-right text-sm text-gray-600">
+                      {campaign.add_to_cart || '-'}
+                    </td>
+                    {/* 结算 */}
+                    <td className="px-3 py-3 text-right text-sm text-gray-600">
+                      {campaign.initiate_checkout || '-'}
+                    </td>
+                    {/* 点击 */}
                     <td className="px-3 py-3 text-right text-sm text-gray-600">
                       {formatNumber(campaign.clicks)}
                     </td>
-                    <td className="px-3 py-3 text-right text-sm">
-                      <span className={`${
-                        campaign.ctr >= 3 ? 'text-emerald-600' :
-                        campaign.ctr >= 1 ? 'text-gray-600' :
-                        'text-red-500'
-                      }`}>
-                        {formatPercent(campaign.ctr)}
-                      </span>
-                    </td>
+                    {/* 展示 */}
                     <td className="px-3 py-3 text-right text-sm text-gray-600">
-                      {formatCurrency(campaign.cpc)}
+                      {formatNumber(campaign.impressions)}
                     </td>
                   </tr>
                   {isExpanded && (

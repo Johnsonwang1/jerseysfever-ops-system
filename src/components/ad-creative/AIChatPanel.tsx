@@ -23,7 +23,7 @@ import { SUPPORTED_MODELS } from '@/lib/ai-image';
 import type { AdProductContext, AdAspectRatio, AIContext } from '@/lib/ad-creative/types';
 
 interface AIChatPanelProps {
-  product: AdProductContext | null;
+  products: AdProductContext[];
   aspectRatio: AdAspectRatio;
   onAspectRatioChange: (ratio: AdAspectRatio) => void;
   onImageSelect: (imageUrl: string) => void;
@@ -39,7 +39,7 @@ const ASPECT_RATIO_OPTIONS: { id: AdAspectRatio; label: string; desc: string }[]
   { id: '1.91:1', label: '1.91:1', desc: 'Link' },
 ];
 
-export function AIChatPanel({ product, aspectRatio, onAspectRatioChange, onImageSelect, onSaveDraft, onConfirmComplete, onSiteExport }: AIChatPanelProps) {
+export function AIChatPanel({ products, aspectRatio, onAspectRatioChange, onImageSelect, onSaveDraft, onConfirmComplete, onSiteExport }: AIChatPanelProps) {
   const [inputValue, setInputValue] = useState('');
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -60,7 +60,7 @@ export function AIChatPanel({ product, aspectRatio, onAspectRatioChange, onImage
     setModel,
     setSelectedImageForIteration,
   } = useAIChat({
-    product,
+    products,
     aspectRatio,
     onImageSelect,
   });
@@ -330,24 +330,17 @@ export function AIChatPanel({ product, aspectRatio, onAspectRatioChange, onImage
 
         {/* 输入区域 */}
         <div className="p-4">
-          {!product && (
-            <div className="mb-2 px-3 py-2 bg-amber-50 text-amber-700 text-xs rounded-lg">
-              请先选择商品后再生成广告图
-            </div>
-          )}
           <div className="relative">
             <textarea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                product
-                  ? selectedImageUrl
-                    ? '输入修改要求...'
-                    : '描述你想要的广告图效果...'
-                  : '请先选择商品'
+                selectedImageUrl
+                  ? '输入修改要求...'
+                  : '描述你想要的广告图效果...'
               }
-              disabled={!product || isGenerating}
+              disabled={isGenerating}
               className="w-full px-4 py-3 pr-24 text-sm border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-50 disabled:cursor-not-allowed"
               rows={2}
             />
@@ -355,7 +348,7 @@ export function AIChatPanel({ product, aspectRatio, onAspectRatioChange, onImage
               {/* 上传图片按钮 */}
               <button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={!product || isGenerating}
+                disabled={isGenerating}
                 className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 title="上传参考图片"
               >
@@ -372,7 +365,7 @@ export function AIChatPanel({ product, aspectRatio, onAspectRatioChange, onImage
               {/* 发送按钮 */}
               <button
                 onClick={handleSend}
-                disabled={!inputValue.trim() || isGenerating || !product}
+                disabled={!inputValue.trim() || isGenerating}
                 className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
               >
                 <Send className="w-4 h-4" />

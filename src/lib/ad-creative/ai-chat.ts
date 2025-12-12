@@ -11,10 +11,10 @@ import type {
   GeneratedImage,
 } from './types';
 
-// 构建 AI Prompt
+// 构建 AI Prompt（支持多商品）
 export function buildPrompt(
   userInput: string,
-  product: AdProductContext | null,
+  products: AdProductContext[],
   context: AIContext,
   conversationHistory?: string[]
 ): string {
@@ -29,33 +29,50 @@ export function buildPrompt(
 
   prompt += `Create an advertisement image.\n\nUser request: ${userInput}\n\n`;
 
-  if (product) {
-    if (context.includeTitle) {
-      prompt += `Product: ${product.name}\n`;
-    }
+  if (products.length > 0) {
+    if (products.length === 1) {
+      // 单商品模式
+      const product = products[0];
+      if (context.includeTitle) {
+        prompt += `Product: ${product.name}\n`;
+      }
 
-    if (context.includePrice) {
-      const price = product.prices?.com;
-      const originalPrice = product.regular_prices?.com;
-      if (price) {
-        prompt += `Price: $${price}`;
-        if (originalPrice && originalPrice > price) {
-          prompt += ` (was $${originalPrice}, ${Math.round((1 - price / originalPrice) * 100)}% OFF)`;
+      if (context.includePrice) {
+        const price = product.prices?.com;
+        const originalPrice = product.regular_prices?.com;
+        if (price) {
+          prompt += `Price: $${price}`;
+          if (originalPrice && originalPrice > price) {
+            prompt += ` (was $${originalPrice}, ${Math.round((1 - price / originalPrice) * 100)}% OFF)`;
+          }
+          prompt += '\n';
+        }
+      }
+
+      if (product.attributes?.team) {
+        prompt += `Team: ${product.attributes.team}\n`;
+      }
+
+      if (product.attributes?.season) {
+        prompt += `Season: ${product.attributes.season}\n`;
+      }
+    } else {
+      // 多商品模式
+      prompt += `Multiple products (${products.length} items):\n`;
+      products.forEach((product, index) => {
+        prompt += `\nProduct ${index + 1}: ${product.name}`;
+        if (product.attributes?.team) {
+          prompt += ` (${product.attributes.team})`;
+        }
+        if (context.includePrice && product.prices?.com) {
+          prompt += ` - $${product.prices.com}`;
         }
         prompt += '\n';
-      }
-    }
-
-    if (product.attributes?.team) {
-      prompt += `Team: ${product.attributes.team}\n`;
-    }
-
-    if (product.attributes?.season) {
-      prompt += `Season: ${product.attributes.season}\n`;
+      });
     }
 
     if (context.includeLogo) {
-      prompt += 'Include a small "JerseysFever" brand watermark in the corner.\n';
+      prompt += '\nInclude a small "JerseysFever" brand watermark in the corner.\n';
     }
   }
 
@@ -64,15 +81,23 @@ export function buildPrompt(
   return prompt;
 }
 
-// 获取图片上下文
+// 获取图片上下文（支持多商品）
 export function getImageContext(
-  product: AdProductContext | null,
+  products: AdProductContext[],
   context: AIContext
 ): string[] {
-  if (context.includeProductImage && product?.images?.length) {
-    return [product.images[0]]; // 商品主图
+  if (!context.includeProductImage || products.length === 0) {
+    return [];
   }
-  return [];
+
+  // 收集所有商品的主图
+  const images: string[] = [];
+  for (const product of products) {
+    if (product.images?.length) {
+      images.push(product.images[0]);
+    }
+  }
+  return images;
 }
 
 // 转换 aspectRatio 格式给 AI API

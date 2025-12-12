@@ -38,8 +38,8 @@ export function AdCreativePage() {
   const [lastModel, setLastModel] = useState<string>('');
   const [saveSuccess, setSaveSuccess] = useState<'draft' | 'complete' | null>(null);
 
-  // 当前选中的商品上下文
-  const [productContext, setProductContext] = useState<AdProductContext | null>(null);
+  // 当前选中的商品上下文（支持多商品）
+  const [productContexts, setProductContexts] = useState<AdProductContext[]>([]);
 
   // 加载已有创作数据
   useEffect(() => {
@@ -56,14 +56,14 @@ export function AdCreativePage() {
   // 当 URL 参数的商品加载完成后，设置商品上下文
   useEffect(() => {
     if (product) {
-      setProductContext({
+      setProductContexts([{
         sku: product.sku,
         name: product.name,
         images: product.images || [],
         prices: product.prices || {},
         regular_prices: product.regular_prices,
         attributes: product.attributes,
-      });
+      }]);
     }
   }, [product]);
 
@@ -79,12 +79,11 @@ export function AdCreativePage() {
 
   // 保存草稿
   const handleSaveDraft = useCallback(async (imageUrl: string) => {
-    if (!productContext) return;
-
+    const firstProduct = productContexts[0];
     const result = await saveMutation.mutateAsync({
       id: currentCreativeId || undefined,
-      name: `${productContext.name} 广告图`,
-      sku: productContext.sku,
+      name: firstProduct ? `${firstProduct.name} 广告图` : '广告图',
+      sku: firstProduct?.sku || null,
       aspect_ratio: aspectRatio,
       image_url: imageUrl,
       prompt: lastPrompt || null,
@@ -96,16 +95,15 @@ export function AdCreativePage() {
     setConfirmedImageUrl(imageUrl);
     setSaveSuccess('draft');
     setTimeout(() => setSaveSuccess(null), 2000);
-  }, [productContext, aspectRatio, lastPrompt, lastModel, currentCreativeId, saveMutation]);
+  }, [productContexts, aspectRatio, lastPrompt, lastModel, currentCreativeId, saveMutation]);
 
   // 确认完成
   const handleConfirmComplete = useCallback(async (imageUrl: string) => {
-    if (!productContext) return;
-
+    const firstProduct = productContexts[0];
     const result = await saveMutation.mutateAsync({
       id: currentCreativeId || undefined,
-      name: `${productContext.name} 广告图`,
-      sku: productContext.sku,
+      name: firstProduct ? `${firstProduct.name} 广告图` : '广告图',
+      sku: firstProduct?.sku || null,
       aspect_ratio: aspectRatio,
       image_url: imageUrl,
       prompt: lastPrompt || null,
@@ -117,7 +115,7 @@ export function AdCreativePage() {
     setConfirmedImageUrl(imageUrl);
     setSaveSuccess('complete');
     setTimeout(() => setSaveSuccess(null), 2000);
-  }, [productContext, aspectRatio, lastPrompt, lastModel, currentCreativeId, saveMutation]);
+  }, [productContexts, aspectRatio, lastPrompt, lastModel, currentCreativeId, saveMutation]);
 
   // 打开多站点导出
   const handleSiteExport = useCallback((imageUrl: string) => {
@@ -125,10 +123,15 @@ export function AdCreativePage() {
     setShowSiteExportDialog(true);
   }, []);
 
-  // 选择商品
-  const handleSelectProduct = useCallback((ctx: AdProductContext) => {
-    setProductContext(ctx);
+  // 选择商品（支持多选）
+  const handleSelectProducts = useCallback((products: AdProductContext[]) => {
+    setProductContexts(products);
     setShowProductSelector(false);
+  }, []);
+
+  // 移除单个商品
+  const handleRemoveProduct = useCallback((sku: string) => {
+    setProductContexts(prev => prev.filter(p => p.sku !== sku));
   }, []);
 
   return (
@@ -163,8 +166,9 @@ export function AdCreativePage() {
 
       {/* 商品上下文条 */}
       <ProductContextBar
-        product={productContext}
-        onChangeProduct={() => setShowProductSelector(true)}
+        products={productContexts}
+        onChangeProducts={() => setShowProductSelector(true)}
+        onRemoveProduct={handleRemoveProduct}
       />
 
       {/* 主编辑区域 - 两栏布局 */}
@@ -211,7 +215,7 @@ export function AdCreativePage() {
         {/* 右侧：AI 对话面板 */}
         <div className="w-[420px] border-l border-gray-200 flex-shrink-0">
           <AIChatPanel
-            product={productContext}
+            products={productContexts}
             aspectRatio={aspectRatio}
             onAspectRatioChange={handleAspectRatioChange}
             onImageSelect={handleAIImageSelect}
@@ -226,7 +230,7 @@ export function AdCreativePage() {
       {showSiteExportDialog && confirmedImageUrl && (
         <SiteExportDialog
           imageUrl={confirmedImageUrl}
-          productContext={productContext}
+          productContext={productContexts[0] || null}
           aspectRatio={aspectRatio}
           onClose={() => setShowSiteExportDialog(false)}
         />
@@ -235,8 +239,9 @@ export function AdCreativePage() {
       {/* 商品选择器 */}
       {showProductSelector && (
         <ProductSelector
-          currentSku={productContext?.sku}
-          onSelect={handleSelectProduct}
+          currentSkus={productContexts.map(p => p.sku)}
+          multiSelect={true}
+          onSelect={handleSelectProducts}
           onClose={() => setShowProductSelector(false)}
         />
       )}
