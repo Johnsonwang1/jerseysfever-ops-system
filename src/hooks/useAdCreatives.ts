@@ -48,6 +48,9 @@ export function useAdCreatives(params: AdCreativeQueryParams = {}) {
   return useQuery({
     queryKey: adCreativeKeys.list(params),
     queryFn: async () => {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAdCreatives.ts:queryFn:start',message:'Fetching ad creatives',data:{params},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       let query = supabase
         .from('ad_creatives')
         .select('*')
@@ -69,6 +72,9 @@ export function useAdCreatives(params: AdCreativeQueryParams = {}) {
       }
 
       const { data, error } = await query;
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAdCreatives.ts:queryFn:result',message:'Ad creatives fetched',data:{count:data?.length,error:error?.message,firstItem:data?.[0]?.id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
 
       if (error) throw error;
       return data as AdCreative[];
@@ -120,6 +126,10 @@ export function useSaveAdCreative() {
     mutationFn: async (params: SaveAdCreativeParams) => {
       const { id, ...data } = params;
 
+      // 获取当前用户 ID（用于新建时设置 created_by）
+      const { data: { user } } = await supabase.auth.getUser();
+      const userId = user?.id;
+
       if (id) {
         // 更新
         const { data: result, error } = await supabase
@@ -135,12 +145,13 @@ export function useSaveAdCreative() {
         if (error) throw error;
         return result as AdCreative;
       } else {
-        // 新建
+        // 新建 - 需要设置 created_by 字段以满足 RLS 策略
         const { data: result, error } = await supabase
           .from('ad_creatives')
           .insert({
             ...data,
             thumbnail_url: data.image_url, // 使用主图作为缩略图
+            created_by: userId, // 设置创建者 ID
           })
           .select()
           .single();

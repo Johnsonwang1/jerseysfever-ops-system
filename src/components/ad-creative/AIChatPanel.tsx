@@ -89,6 +89,9 @@ export function AIChatPanel({ products, aspectRatio, onAspectRatioChange, onImag
 
   // 图片点击 - 打开预览弹窗
   const handleImageClick = (messageId: string, imageId: string, imageUrl: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AIChatPanel.tsx:handleImageClick',message:'Image clicked for preview',data:{messageId,imageId,imageUrlPreview:imageUrl?.slice(0,100),isUrl:imageUrl?.startsWith('http')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
     setPreviewImage({ url: imageUrl, messageId, imageId });
   };
 
@@ -104,6 +107,9 @@ export function AIChatPanel({ products, aspectRatio, onAspectRatioChange, onImag
   // 预览弹窗中保存草稿
   const handlePreviewSaveDraft = async () => {
     if (previewImage) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AIChatPanel.tsx:handlePreviewSaveDraft',message:'Saving draft from preview',data:{imageUrlPreview:previewImage.url?.slice(0,100),isUrl:previewImage.url?.startsWith('http')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       await onSaveDraft(previewImage.url);
       setPreviewImage(null);
     }

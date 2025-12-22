@@ -79,22 +79,35 @@ export function AdCreativePage() {
 
   // 保存草稿
   const handleSaveDraft = useCallback(async (imageUrl: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdCreativePage.tsx:handleSaveDraft:entry',message:'handleSaveDraft called',data:{imageUrlPreview:imageUrl?.slice(0,100),isUrl:imageUrl?.startsWith('http'),hasCurrentCreativeId:!!currentCreativeId,aspectRatio},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     const firstProduct = productContexts[0];
-    const result = await saveMutation.mutateAsync({
-      id: currentCreativeId || undefined,
-      name: firstProduct ? `${firstProduct.name} 广告图` : '广告图',
-      sku: firstProduct?.sku || null,
-      aspect_ratio: aspectRatio,
-      image_url: imageUrl,
-      prompt: lastPrompt || null,
-      model: lastModel || null,
-      status: 'draft',
-    });
+    try {
+      const result = await saveMutation.mutateAsync({
+        id: currentCreativeId || undefined,
+        name: firstProduct ? `${firstProduct.name} 广告图` : '广告图',
+        sku: firstProduct?.sku || null,
+        aspect_ratio: aspectRatio,
+        image_url: imageUrl,
+        prompt: lastPrompt || null,
+        model: lastModel || null,
+        status: 'draft',
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdCreativePage.tsx:handleSaveDraft:success',message:'Draft saved successfully',data:{resultId:result.id,resultImageUrl:result.image_url?.slice(0,100)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
 
-    setCurrentCreativeId(result.id);
-    setConfirmedImageUrl(imageUrl);
-    setSaveSuccess('draft');
-    setTimeout(() => setSaveSuccess(null), 2000);
+      setCurrentCreativeId(result.id);
+      setConfirmedImageUrl(imageUrl);
+      setSaveSuccess('draft');
+      setTimeout(() => setSaveSuccess(null), 2000);
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AdCreativePage.tsx:handleSaveDraft:error',message:'Draft save failed',data:{error:String(err)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      throw err;
+    }
   }, [productContexts, aspectRatio, lastPrompt, lastModel, currentCreativeId, saveMutation]);
 
   // 确认完成

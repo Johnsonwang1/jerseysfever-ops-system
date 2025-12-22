@@ -20,25 +20,16 @@ export const customerKeys = {
 
 // ==================== Edge Function 调用 ====================
 
-const EDGE_FUNCTION_URL = import.meta.env.VITE_SUPABASE_URL;
-const EDGE_FUNCTION_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
 async function callEdgeFunction<T>(functionName: string, body: object): Promise<T> {
-  const response = await fetch(`${EDGE_FUNCTION_URL}/functions/v1/${functionName}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${EDGE_FUNCTION_KEY}`,
-    },
-    body: JSON.stringify(body),
+  const { data, error } = await supabase.functions.invoke(functionName, {
+    body,
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `Edge function error: ${response.status}`);
+  if (error) {
+    throw new Error(error.message || `Edge function error`);
   }
 
-  return response.json();
+  return data as T;
 }
 
 // ==================== Customer Sync API ====================

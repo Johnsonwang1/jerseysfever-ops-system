@@ -58,6 +58,9 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
 
   // 发送消息
   const sendMessage = useCallback(async (content: string, uploadedImages?: string[]) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAIChat.ts:sendMessage:entry',message:'sendMessage called',data:{content:content?.slice(0,50),uploadedImagesCount:uploadedImages?.length||0,isGenerating,productsCount:products.length,aspectRatio,selectedImageUrl:selectedImageUrl?.slice(0,50)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     if (!content.trim() || isGenerating) return;
 
     // 添加用户消息
@@ -97,6 +100,9 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
       // 用户上传的参考图片：先转存到 Storage 获取 URL
       let uploadedUrls: string[] = [];
       if (uploadedImages && uploadedImages.length > 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAIChat.ts:uploadImages:start',message:'Starting image upload to Storage',data:{uploadedImagesCount:uploadedImages.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
         console.log('Uploading user images to Storage...');
         for (let i = 0; i < uploadedImages.length; i++) {
           const base64 = uploadedImages[i];
@@ -107,7 +113,13 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
             const url = await uploadImageToStorage(base64Data, filename);
             console.log('Uploaded image URL:', url);
             uploadedUrls.push(url);
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAIChat.ts:uploadImages:success',message:'Image uploaded successfully',data:{index:i,url:url?.slice(0,100)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
           } catch (err) {
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAIChat.ts:uploadImages:error',message:'Image upload failed',data:{index:i,error:String(err)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
             console.error('Failed to upload image:', err);
           }
         }
@@ -141,6 +153,9 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
       }
 
       console.log('Final images array:', images);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAIChat.ts:generateImages:start',message:'Starting image generation',data:{promptLength:prompt.length,imagesCount:images.length,aspectRatio,model,imagesPreview:images.map(i=>i?.slice(0,50))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
 
       // 生成多张图片
       const generatedImages = await generateMultipleImages(
@@ -150,6 +165,8 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
         model,
         4 // 生成4张
       );
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAIChat.ts:generateImages:result',message:'Image generation completed',data:{generatedCount:generatedImages.length,firstImagePreview:generatedImages[0]?.base64?.slice(0,100),isUrl:generatedImages[0]?.base64?.startsWith('http')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
 
       // 移除加载消息，添加结果
       setMessages(prev => {

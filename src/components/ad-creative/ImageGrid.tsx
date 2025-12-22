@@ -29,9 +29,16 @@ function getImageSrc(imageData: string): string {
 export function ImageGrid({ images, onImageClick }: ImageGridProps) {
   const [loadErrors, setLoadErrors] = useState<Set<string>>(new Set());
 
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ImageGrid.tsx:render',message:'ImageGrid rendering',data:{imagesCount:images?.length,firstImageData:images?.[0]?.base64?.slice(0,100),isUrl:images?.[0]?.base64?.startsWith('http')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
+
   if (!images || images.length === 0) return null;
 
   const handleImageError = (imgId: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/92fbfe0c-e455-47e3-a678-8da60b30f029',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ImageGrid.tsx:handleImageError',message:'Image load error',data:{imgId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     console.error('Image load error for:', imgId);
     setLoadErrors(prev => new Set(prev).add(imgId));
   };
