@@ -314,6 +314,20 @@ class WooCommerceClient {
     return this.request(`/products/${id}`)
   }
 
+  // 通过 SKU 搜索商品（用于检查是否已存在）
+  async findProductBySku(sku: string): Promise<{ id: number; name: string } | null> {
+    try {
+      const products = await this.request<any[]>(`/products?sku=${encodeURIComponent(sku)}&per_page=1`)
+      if (products && products.length > 0) {
+        return { id: products[0].id, name: products[0].name }
+      }
+      return null
+    } catch (error) {
+      console.warn(`[${this.site}] 搜索 SKU ${sku} 失败:`, error)
+      return null
+    }
+  }
+
   async updateProduct(id: number, data: any): Promise<any> {
     return this.request(`/products/${id}`, {
       method: 'PUT',
@@ -1037,12 +1051,160 @@ async function syncSingleSite(
   options?: SyncOptions
 ): Promise<SyncResult> {
   const wooId = product.woo_ids?.[site]
-  
-  if (!wooId) {
-    return { site, success: false, error: '该站点未发布此商品' }
-  }
-
   const client = new WooCommerceClient(site)
+  
+  // 如果站点没有 woo_id，先检查 SKU 是否已存在，存在则关联，否则创建新商品
+  if (!wooId) {
+    console.log(`[${site}] PIM 未记录此站点，检查是否已存在...`)
+    
+    try {
+      // 先通过 SKU 搜索，检查站点是否已有此商品
+      const existingProduct = await client.findProductBySku(product.sku)
+      
+      if (existingProduct) {
+        // 站点已有此商品，直接关联 woo_id 并继续同步
+        console.log(`✅ [${site}] 发现已存在的商品 (ID: ${existingProduct.id})，关联并同步...`)
+        
+        // 更新 PIM 中的 woo_id
+        const { error: linkError } = await supabase
+          .from('products')
+          .update({
+            woo_ids: { ...product.woo_ids, [site]: existingProduct.id },
+            sync_status: { ...product.sync_status, [site]: 'synced' },
+          })
+          .eq('sku', product.sku)
+        
+        if (linkError) {
+          console.warn(`[${site}] 关联 woo_id 失败: ${linkError.message}`)
+        }
+        
+        // 更新 product 对象，继续执行后续同步逻辑
+        product.woo_ids = { ...product.woo_ids, [site]: existingProduct.id }
+        
+        // 递归调用自己，这次有 woo_id 了会走更新逻辑
+        return syncSingleSite(supabase, product, site, options)
+      }
+      
+      // 站点没有此商品，创建新商品
+      console.log(`[${site}] 商品不存在，开始创建...`)
+      
+      // 获取站点内容（优先使用站点内容，否则回退到 .com 或默认）
+      const siteContent = product.content?.[site] || product.content?.com || {
+        name: product.name || 'Unnamed Product',
+        description: '',
+        short_description: '',
+      }
+      
+      // 验证必要内容
+      if (!siteContent.name) {
+        return { site, success: false, error: '缺少商品名称，请先生成站点内容' }
+      }
+      
+      // 获取价格
+      const sitePrice = product.prices?.[site] ?? product.prices?.com ?? 29.99
+      
+      // 获取分类 ID
+      const categoryIds: number[] = []
+      if (product.categories && product.categories.length > 0) {
+        for (const catName of product.categories) {
+          // 先从缓存获取
+          if (options?.categoryCache) {
+            const cachedId = getCategoryIdFromCache(options.categoryCache, site, catName)
+            if (cachedId !== null) {
+              categoryIds.push(cachedId)
+              continue
+            }
+          }
+          // 缓存中没有，调用 API 查找/创建
+          const catId = await client.findOrCreateCategory(catName)
+          categoryIds.push(catId)
+        }
+      }
+      
+      // 准备图片（转存到 Storage）
+      let finalImages = product.images || []
+      if (finalImages.length > 0) {
+        console.log(`[${site}] 处理 ${finalImages.length} 张图片...`)
+        const imageResult = await prepareImagesForPublish(supabase, finalImages, product.sku)
+        finalImages = imageResult.storageUrls
+        if (imageResult.migrated > 0) {
+          console.log(`[${site}] 🖼️ ${imageResult.migrated} 张图片已转存到 Storage`)
+        }
+      }
+      
+      // 获取属性（带默认值）
+      const attributes = {
+        gender: product.attributes?.gender || "Men's",
+        season: product.attributes?.season || '2024/25',
+        type: product.attributes?.type || 'Home',
+        version: product.attributes?.version || 'Standard',
+        sleeve: product.attributes?.sleeve || 'Short Sleeve',
+        events: product.attributes?.events || [],
+        team: product.attributes?.team || product.categories?.[0] || undefined,
+      }
+      
+      // 创建可变商品
+      const result = await client.createVariableProduct({
+        name: siteContent.name,
+        description: siteContent.description || '',
+        short_description: siteContent.short_description || '',
+        sku: product.sku,
+        categories: categoryIds,
+        imageUrls: finalImages,
+        attributes,
+        price: sitePrice.toString(),
+      })
+      
+      console.log(`✅ [${site}] 商品创建成功 - ID: ${result.id}`)
+      
+      // 更新数据库：woo_ids, sync_status, prices 等
+      const salePrice = parseFloat(sitePrice.toString())
+      const regularPrice = parseFloat((salePrice * 2).toFixed(2))
+      
+      // 获取变体信息
+      let siteVariations: any[] = []
+      try {
+        siteVariations = await client.getProductVariationsFull(result.id)
+        console.log(`[${site}] 获取 ${siteVariations.length} 个变体`)
+      } catch (err) {
+        console.warn(`[${site}] 获取变体失败:`, err)
+      }
+      
+      // 合并更新数据库
+      const updateData: Record<string, any> = {
+        woo_ids: { ...product.woo_ids, [site]: result.id },
+        sync_status: { ...product.sync_status, [site]: 'synced' },
+        prices: { ...product.prices, [site]: salePrice },
+        regular_prices: { ...product.regular_prices, [site]: regularPrice },
+        stock_quantities: { ...product.stock_quantities, [site]: 100 },
+        stock_statuses: { ...product.stock_statuses, [site]: 'instock' },
+        statuses: { ...product.statuses, [site]: 'publish' },
+        variations: { ...(product.variations || {}), [site]: siteVariations },
+        variation_counts: { ...(product.variation_counts || {}), [site]: siteVariations.length },
+        last_synced_at: new Date().toISOString(),
+      }
+      
+      // 如果是首次创建且没有 content，添加 content
+      if (!product.content?.[site] && siteContent) {
+        updateData.content = { ...product.content, [site]: siteContent }
+      }
+      
+      const { error: dbError } = await supabase
+        .from('products')
+        .update(updateData)
+        .eq('sku', product.sku)
+      
+      if (dbError) {
+        console.warn(`[${site}] 更新数据库失败: ${dbError.message}`)
+      }
+      
+      return { site, success: true }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '创建商品失败'
+      console.error(`❌ [${site}] 创建商品失败: ${errorMsg}`)
+      return { site, success: false, error: errorMsg }
+    }
+  }
   
   // 获取站点数据（优先使用站点数据，否则回退到 .com）
   const siteContent = product.content?.[site] || product.content?.com

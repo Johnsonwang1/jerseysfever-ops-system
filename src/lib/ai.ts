@@ -10,7 +10,7 @@ import type { SiteKey, ProductContent } from './types';
 import { supabase } from './supabase';
 
 // 可选的 Gemini 模型
-export type GeminiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';
+export type GeminiModel = 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
 // 语言类型
 type LanguageKey = 'en' | 'de' | 'fr';
@@ -23,8 +23,10 @@ const SITE_LANGUAGE_MAP: Record<SiteKey, LanguageKey> = {
   fr: 'fr',
 };
 
-// 当前选择的模型（默认 flash）
-let currentModel: GeminiModel = 'gemini-2.5-flash';
+// 识别模型（用于识别球衣属性）
+let recognizeModel: GeminiModel = 'gemini-3-flash-preview';
+// 生成模型（用于生成商品内容）
+let generateModel: GeminiModel = 'gemini-3-pro-preview';
 
 // 缓存的分类列表（用于 AI 选择球队）
 let cachedCategories: string[] = [];
@@ -32,12 +34,30 @@ let cachedCategories: string[] = [];
 // 内容缓存（英文站点共用）
 const contentCache = new Map<string, ProductContent>();
 
+export function setRecognizeModel(model: GeminiModel) {
+  recognizeModel = model;
+}
+
+export function getRecognizeModel(): GeminiModel {
+  return recognizeModel;
+}
+
+export function setGenerateModel(model: GeminiModel) {
+  generateModel = model;
+}
+
+export function getGenerateModel(): GeminiModel {
+  return generateModel;
+}
+
+// 兼容旧接口（保留向后兼容）
 export function setGeminiModel(model: GeminiModel) {
-  currentModel = model;
+  recognizeModel = model;
+  generateModel = model;
 }
 
 export function getGeminiModel(): GeminiModel {
-  return currentModel;
+  return recognizeModel;
 }
 
 // 设置可用的分类列表
@@ -62,7 +82,7 @@ export async function recognizeJerseyAttributes(imageBase64: string): Promise<{
     body: {
       action: 'recognize-attributes',
       imageBase64,
-      model: currentModel,
+      model: recognizeModel,
       teamOptions: cachedCategories.length > 0 ? cachedCategories : undefined,
     },
   });
@@ -116,7 +136,7 @@ export async function generateProductContent(
     language,
     attributes,
     generatedTitle,
-    model: currentModel,
+    model: generateModel,
   };
   
   console.log(`AI: Request body size: ${JSON.stringify(requestBody).length} chars`);

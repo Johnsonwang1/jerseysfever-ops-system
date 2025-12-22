@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { X, Edit3, Check, Download, Save, Loader2, Globe } from 'lucide-react';
+import { downloadImage } from '@/lib/ai-image';
 
 interface ImagePreviewModalProps {
   imageUrl: string;
@@ -27,22 +28,10 @@ export function ImagePreviewModal({
 }: ImagePreviewModalProps) {
   const [saveAction, setSaveAction] = useState<'draft' | 'complete' | null>(null);
 
-  // 下载图片
+  // 下载图片（使用智能下载函数处理 CORS）
   const handleDownload = async () => {
-    try {
-      const response = await fetch(imageUrl);
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `ad-creative-${Date.now()}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Download failed:', error);
-    }
+    const filename = `ad-creative-${Date.now()}.png`;
+    await downloadImage(imageUrl, filename);
   };
 
   // 保存草稿

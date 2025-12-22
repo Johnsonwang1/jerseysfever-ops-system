@@ -9,6 +9,7 @@ import { Toaster } from '@/components/ui/sonner';
 // 懒加载页面组件
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then(m => ({ default: m.ProductsPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
+const CustomersPage = lazy(() => import('./pages/CustomersPage').then(m => ({ default: m.CustomersPage })));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const AdCreativeListPage = lazy(() => import('./pages/AdCreativeListPage').then(m => ({ default: m.AdCreativeListPage })));
 const AdCreativePage = lazy(() => import('./pages/AdCreativePage').then(m => ({ default: m.AdCreativePage })));
@@ -87,6 +88,7 @@ function AppRoutes() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
           {/* 仅管理员可访问 */}
+          <Route path="customers" element={<RoleProtectedRoute allowedRoles={['admin']}><CustomersPage /></RoleProtectedRoute>} />
           <Route path="analytics" element={<RoleProtectedRoute allowedRoles={['admin']}><AnalyticsPage /></RoleProtectedRoute>} />
           <Route path="ad-creative" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativeListPage /></RoleProtectedRoute>} />
           <Route path="ad-creative/new" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativePage /></RoleProtectedRoute>} />

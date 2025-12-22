@@ -157,5 +157,82 @@ export async function getSupportedModels(): Promise<string[]> {
   }
 }
 
+// Supabase Edge Function URL（用于代理下载）
+import { supabase } from './supabase';
+
+/**
+ * 检查是否是 GCS URL（需要代理下载）
+ */
+export function isGcsUrl(url: string): boolean {
+  return url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com');
+}
+
+/**
+ * 通过 Supabase Edge Function 代理下载图片（解决 CORS 问题）
+ */
+export async function downloadGcsImage(url: string): Promise<Blob> {
+  const { data, error } = await supabase.functions.invoke('image-proxy', {
+    body: { url },
+  });
+
+  if (error) {
+    console.error('Proxy download error:', error);
+    throw new Error(`代理下载失败: ${error.message}`);
+  }
+
+  if (data?.success && data?.image) {
+    // 将 base64 转换为 Blob
+    const base64 = data.image.replace(/^data:image\/\w+;base64,/, '');
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const contentType = data.contentType || 'image/png';
+    return new Blob([bytes], { type: contentType });
+  }
+  
+  throw new Error(data?.error || '代理下载失败');
+}
+
+/**
+ * 智能下载图片（自动处理 CORS 问题）
+ */
+export async function downloadImage(url: string, filename: string): Promise<void> {
+  try {
+    let blob: Blob;
+    
+    if (isGcsUrl(url)) {
+      // GCS URL 使用代理下载
+      blob = await downloadGcsImage(url);
+    } else {
+      // 普通 URL 直接下载
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`下载失败: ${response.status}`);
+      }
+      blob = await response.blob();
+    }
+    
+    // 创建下载链接
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch (error) {
+    console.error('Download failed:', error);
+    // 如果代理下载失败，尝试在新标签页打开
+    if (isGcsUrl(url)) {
+      window.open(url, '_blank');
+      console.log('已在新标签页打开图片，请右键保存');
+    }
+    throw error;
+  }
+}
+
 
 

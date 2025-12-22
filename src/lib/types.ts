@@ -284,3 +284,101 @@ export interface ProductStat {
   refundAmount: number;      // 退款金额
   orderCount: number;        // 订单数（出现在多少个订单中）
 }
+
+// ==================== 客户管理相关类型 ====================
+
+// 客户分配方法
+export type CustomerAssignmentMethod = 'address' | 'email_domain' | 'ai_analysis' | 'manual';
+
+// 客户迁移状态
+export type CustomerMigrationStatus = 'pending' | 'migrated' | 'skipped' | 'error';
+
+// 客户订单统计
+export interface CustomerOrderStats {
+  total_orders: number;
+  total_spent: number;
+  valid_orders: number;
+  valid_spent: number;
+  invalid_orders: number;
+  invalid_spent: number;
+  first_order_date: string;
+  last_order_date: string;
+  by_site: Partial<Record<SiteKey, { orders: number; spent: number; valid_orders: number; valid_spent: number }>>;
+}
+
+// 客户 AI 分析结果
+export interface CustomerAIAnalysis {
+  name_analysis: {
+    detected_origin: string;
+    confidence: number;
+    reasoning?: string;
+  };
+  email_analysis: {
+    domain: string;
+    domain_country: string | null;
+    confidence: number;
+  };
+  order_history_analysis?: {
+    primary_site: SiteKey | null;
+    confidence: number;
+  };
+  recommended_site: SiteKey;
+  overall_confidence: number;
+  reasoning: string;
+}
+
+// 客户
+export interface Customer {
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string;
+  phone: string | null;
+  woo_ids: Partial<Record<SiteKey, number>>;
+  assigned_site: SiteKey | null;
+  assignment_method: CustomerAssignmentMethod | null;
+  assignment_confidence: number | null;
+  assignment_reason: string | null;
+  billing_address: Address | null;
+  shipping_address: Address | null;
+  order_stats: CustomerOrderStats;
+  ai_analysis: CustomerAIAnalysis | null;
+  migration_status: CustomerMigrationStatus;
+  migrated_at: string | null;
+  migration_error: string | null;
+  created_at: string;
+  updated_at: string;
+  last_synced_at: string | null;
+}
+
+// 客户排序字段
+export type CustomerSortField = 'valid_spent' | 'invalid_spent' | 'valid_orders' | 'total_spent';
+
+// 客户查询参数
+export interface CustomerQueryParams {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  assignedSite?: SiteKey | 'unassigned';
+  migrationStatus?: CustomerMigrationStatus;
+  assignmentMethod?: CustomerAssignmentMethod;
+  sortField?: CustomerSortField;
+  sortOrder?: 'asc' | 'desc';
+}
+
+// 客户列表响应
+export interface CustomerListResponse {
+  customers: Customer[];
+  total: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+}
+
+// 客户统计
+export interface CustomerStats {
+  totalCustomers: number;
+  siteDistribution: Record<SiteKey | 'unassigned', number>;
+  methodDistribution: Record<CustomerAssignmentMethod | 'unassigned', number>;
+  migrationDistribution: Record<CustomerMigrationStatus, number>;
+}

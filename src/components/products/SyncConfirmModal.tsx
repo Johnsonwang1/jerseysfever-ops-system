@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Loader2, CheckCircle, XCircle, Upload, Download, ExternalLink } from 'lucide-react';
+import { X, Loader2, CheckCircle, XCircle, Upload, Download, ExternalLink, Plus } from 'lucide-react';
 import { SITES } from '../../lib/attributes';
 import type { SiteKey } from '../../lib/types';
 import type { LocalProduct } from '../../lib/products';
@@ -38,8 +38,11 @@ export function SyncConfirmModal({
   // 操作模式：push = 推送到站点，pull = 从站点拉取
   const [mode, setMode] = useState<ActionMode>('push');
   
-  // 默认选中所有已发布的站点（push模式），或只选 com（pull模式）
+  // 已发布和未发布的站点
   const publishedSites = SITES.filter(site => product.woo_ids?.[site.key]).map(s => s.key);
+  const unpublishedSites = SITES.filter(site => !product.woo_ids?.[site.key]).map(s => s.key);
+  
+  // 默认选中所有已发布的站点
   const [selectedSites, setSelectedSites] = useState<Set<SiteKey>>(new Set(publishedSites));
 
   // 更新模式：选择要更新的字段（默认除了图片都选中）
@@ -70,9 +73,13 @@ export function SyncConfirmModal({
 
   const handleModeChange = (newMode: ActionMode) => {
     setMode(newMode);
-    // 两种模式都默认选所有已发布站点
+    // 拉取模式只能选已发布站点，推送模式默认选已发布站点
     setSelectedSites(new Set(publishedSites));
   };
+  
+  // 计算选中的站点中有多少是新发布的
+  const selectedUnpublishedCount = Array.from(selectedSites).filter(s => unpublishedSites.includes(s)).length;
+  const selectedPublishedCount = selectedSites.size - selectedUnpublishedCount;
 
   const handleConfirm = () => {
     if (selectedSites.size === 0) return;
@@ -191,24 +198,35 @@ export function SyncConfirmModal({
                   {SITES.map((site) => {
                     const hasWooId = !!product.woo_ids?.[site.key];
                     const isSelected = selectedSites.has(site.key);
+                    // 拉取模式下，未发布的站点不可选
+                    const canSelect = isPush || hasWooId;
 
                     return (
                       <button
                         key={site.key}
-                        onClick={() => hasWooId && toggleSite(site.key)}
-                        disabled={!hasWooId || isSyncing}
+                        onClick={() => canSelect && toggleSite(site.key)}
+                        disabled={!canSelect || isSyncing}
                         className={`flex items-center gap-2 p-3 border rounded-lg transition-colors ${
-                          !hasWooId
+                          !canSelect
                             ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
                             : isSelected
-                            ? isPush ? 'border-green-300 bg-green-50' : 'border-blue-300 bg-blue-50'
+                            ? isPush 
+                              ? hasWooId 
+                                ? 'border-green-300 bg-green-50' 
+                                : 'border-purple-300 bg-purple-50'  // 未发布选中时用紫色
+                              : 'border-blue-300 bg-blue-50'
                             : 'border-gray-200 hover:border-gray-300'
                         }`}
                       >
                         <span className="text-lg">{site.flag}</span>
                         <span className="text-sm font-medium">{site.name}</span>
                         {!hasWooId && (
-                          <span className="text-xs text-gray-400 ml-auto">(未发布)</span>
+                          <span className={`flex items-center gap-0.5 text-xs ml-auto ${
+                            isSelected && isPush ? 'text-purple-600' : 'text-gray-400'
+                          }`}>
+                            <Plus className="w-3 h-3" />
+                            新发布
+                          </span>
                         )}
                         {hasWooId && isSelected && (
                           <CheckCircle className={`w-4 h-4 ml-auto ${isPush ? 'text-green-500' : 'text-blue-500'}`} />
@@ -217,6 +235,13 @@ export function SyncConfirmModal({
                     );
                   })}
                 </div>
+                {/* 显示选中的新发布站点数量 */}
+                {isPush && selectedUnpublishedCount > 0 && (
+                  <p className="mt-2 text-xs text-purple-600 flex items-center gap-1">
+                    <Plus className="w-3 h-3" />
+                    将在 {selectedUnpublishedCount} 个站点创建新商品
+                  </p>
+                )}
               </div>
 
               {/* 字段选择（仅推送模式显示） */}
@@ -256,10 +281,24 @@ export function SyncConfirmModal({
               )}
 
               {/* 说明 */}
-              <div className={`p-3 border rounded-lg ${isPush ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
-                <p className={`text-sm ${isPush ? 'text-green-800' : 'text-blue-800'}`}>
+              <div className={`p-3 border rounded-lg ${
+                isPush 
+                  ? selectedUnpublishedCount > 0 
+                    ? 'bg-purple-50 border-purple-200' 
+                    : 'bg-green-50 border-green-200' 
+                  : 'bg-blue-50 border-blue-200'
+              }`}>
+                <p className={`text-sm ${
+                  isPush 
+                    ? selectedUnpublishedCount > 0 
+                      ? 'text-purple-800' 
+                      : 'text-green-800' 
+                    : 'text-blue-800'
+                }`}>
                   {isPush 
-                    ? '将 PIM 中的商品数据推送到选中的站点。未发布的站点将创建新商品，已发布的站点将更新现有商品。'
+                    ? selectedUnpublishedCount > 0
+                      ? `将在 ${selectedUnpublishedCount} 个站点创建新商品${selectedPublishedCount > 0 ? `，同时更新 ${selectedPublishedCount} 个已有站点` : ''}。需要先确保已生成对应站点的商品内容。`
+                      : '将 PIM 中的商品数据推送到选中的站点。'
                     : '从选中的站点获取最新数据（价格、库存、状态、变体信息等）更新到 PIM。'
                   }
                 </p>

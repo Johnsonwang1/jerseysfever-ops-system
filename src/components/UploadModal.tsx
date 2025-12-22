@@ -25,7 +25,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { SiteKey, UploadedImage, ProductContent } from '../lib/types';
 import { SITES, DEFAULT_PRODUCT_INFO, calculatePrice, generateProductTitle, getTeamFromCategories, generateSKU } from '../lib/attributes';
-import { setGeminiModel, getGeminiModel, recognizeJerseyAttributes, generateProductContent, setAvailableCategories, type GeminiModel } from '../lib/ai';
+import { setRecognizeModel, getRecognizeModel, setGenerateModel, getGenerateModel, recognizeJerseyAttributes, generateProductContent, setAvailableCategories, type GeminiModel } from '../lib/ai';
 import { uploadImageToStorage, getCategoriesFromDb } from '../lib/supabase';
 import { publishProduct, type PublishResult } from '../lib/sync-api';
 import { ProductForm } from './ProductForm';
@@ -152,7 +152,8 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedSite, setExpandedSite] = useState<SiteKey | null>(null);
-  const [selectedModel, setSelectedModel] = useState<GeminiModel>(getGeminiModel());
+  const [selectedRecognizeModel, setSelectedRecognizeModel] = useState<GeminiModel>(getRecognizeModel());
+  const [selectedGenerateModel, setSelectedGenerateModel] = useState<GeminiModel>(getGenerateModel());
   
   // 使用 ref 存储最新的 drafts 状态，确保异步操作中能获取最新值
   const draftsRef = useRef<ProductDraft[]>([]);
@@ -215,10 +216,16 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
     init();
   }, [isOpen]);
 
-  // 切换 AI 模型
-  const handleModelChange = (model: GeminiModel) => {
-    setSelectedModel(model);
-    setGeminiModel(model);
+  // 切换识别模型
+  const handleRecognizeModelChange = (model: GeminiModel) => {
+    setSelectedRecognizeModel(model);
+    setRecognizeModel(model);
+  };
+
+  // 切换生成模型
+  const handleGenerateModelChange = (model: GeminiModel) => {
+    setSelectedGenerateModel(model);
+    setGenerateModel(model);
   };
 
   // 新建草稿
@@ -751,21 +758,39 @@ export function UploadModal({ isOpen, onClose }: UploadModalProps) {
           </div>
           <div className="flex items-center gap-4">
             {/* AI 模型选择 */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">AI:</span>
-              {(['gemini-2.5-flash', 'gemini-2.5-pro'] as GeminiModel[]).map((model) => (
-                <button
-                  key={model}
-                  onClick={() => handleModelChange(model)}
-                  className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
-                    selectedModel === model
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                  }`}
-                >
-                  {model === 'gemini-2.5-flash' ? 'Flash' : 'Pro'}
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">识别:</span>
+                {(['gemini-3-flash-preview', 'gemini-3-pro-preview'] as GeminiModel[]).map((model) => (
+                  <button
+                    key={model}
+                    onClick={() => handleRecognizeModelChange(model)}
+                    className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
+                      selectedRecognizeModel === model
+                        ? 'bg-gray-900 text-white'
+                        : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                    }`}
+                  >
+                    {model === 'gemini-3-flash-preview' ? 'Flash' : 'Pro'}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">生成:</span>
+                {(['gemini-3-flash-preview', 'gemini-3-pro-preview'] as GeminiModel[]).map((model) => (
+                  <button
+                    key={model}
+                    onClick={() => handleGenerateModelChange(model)}
+                    className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
+                      selectedGenerateModel === model
+                        ? 'bg-gray-900 text-white'
+                        : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                    }`}
+                  >
+                    {model === 'gemini-3-flash-preview' ? 'Flash' : 'Pro'}
+                  </button>
+                ))}
+              </div>
             </div>
             <button
               onClick={onClose}

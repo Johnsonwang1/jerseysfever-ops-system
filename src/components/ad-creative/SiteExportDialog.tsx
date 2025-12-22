@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import type { SiteKey } from '@/lib/types';
 import type { AdAspectRatio, AdProductContext } from '@/lib/ad-creative/types';
-import { processImage, type AIModelId, type AspectRatioId } from '@/lib/ai-image';
+import { processImage, downloadImage, type AIModelId, type AspectRatioId } from '@/lib/ai-image';
 
 interface SiteExportDialogProps {
   imageUrl: string;
@@ -203,22 +203,10 @@ export function SiteExportDialog({
     }
   }, [imageUrl, aspectRatio, model, buildSitePrompt]);
 
-  // 下载图片
+  // 下载图片（使用智能下载函数处理 CORS）
   const handleDownload = async (url: string, site: SiteKey) => {
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = `ad-${productContext?.sku || 'creative'}-${site}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.error('Download failed:', error);
-    }
+    const filename = `ad-${productContext?.sku || 'creative'}-${site}.png`;
+    await downloadImage(url, filename);
   };
 
   // 下载全部

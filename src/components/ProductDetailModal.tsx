@@ -933,23 +933,22 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                 {SITES.map((site) => {
                   const wooId = product.woo_ids?.[site.key];
                   const isSelected = selectedSites.includes(site.key);
-                  const isDisabled = !wooId;
+                  const isNewPublish = !wooId; // 未发布的站点将创建新商品
 
                   return (
                     <label
                       key={site.key}
                       className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                        isDisabled
-                          ? 'bg-gray-50 border-gray-200 cursor-not-allowed opacity-50'
-                          : isSelected
-                          ? 'bg-blue-50 border-blue-300'
+                        isSelected
+                          ? isNewPublish
+                            ? 'bg-purple-50 border-purple-300'  // 新发布用紫色
+                            : 'bg-blue-50 border-blue-300'
                           : 'bg-white border-gray-200 hover:border-gray-300'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        disabled={isDisabled}
                         onChange={(e) => {
                           if (e.target.checked) {
                             setSelectedSites([...selectedSites, site.key]);
@@ -957,13 +956,15 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                             setSelectedSites(selectedSites.filter(s => s !== site.key));
                           }
                         }}
-                        className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                        className={`w-4 h-4 rounded border-gray-300 focus:ring-blue-500 ${
+                          isNewPublish && isSelected ? 'text-purple-600' : 'text-blue-600'
+                        }`}
                       />
                       <span className="text-xl">{site.flag}</span>
                       <div className="flex-1">
                         <div className="font-medium text-gray-900">{site.name}</div>
-                        <div className="text-xs text-gray-500">
-                          {wooId ? `ID: ${wooId}` : '未发布，无法同步'}
+                        <div className={`text-xs ${isNewPublish ? (isSelected ? 'text-purple-600' : 'text-orange-500') : 'text-gray-500'}`}>
+                          {wooId ? `ID: ${wooId}` : '+ 新发布（将创建商品）'}
                         </div>
                       </div>
                     </label>
@@ -1013,6 +1014,24 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                 )}
               </div>
 
+              {/* 新发布站点提示 */}
+              {(() => {
+                const newPublishCount = selectedSites.filter(s => !product.woo_ids?.[s]).length;
+                const updateCount = selectedSites.length - newPublishCount;
+                if (newPublishCount > 0) {
+                  return (
+                    <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                      <p className="text-sm text-purple-800">
+                        将在 <strong>{newPublishCount}</strong> 个站点创建新商品
+                        {updateCount > 0 && `，同时更新 ${updateCount} 个已有站点`}。
+                        请确保已生成对应站点的商品内容。
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3">
                 <button
                   onClick={() => setShowSyncDialog(false)}
@@ -1023,7 +1042,11 @@ export function ProductDetailModal({ product, onClose, onSaved }: ProductDetailM
                 <button
                   onClick={handleSync}
                   disabled={selectedSites.length === 0}
-                  className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 text-sm bg-gray-900 text-white hover:bg-gray-800 rounded-lg disabled:opacity-50"
+                  className={`flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50 ${
+                    selectedSites.some(s => !product.woo_ids?.[s])
+                      ? 'bg-purple-600 hover:bg-purple-700'
+                      : 'bg-gray-900 hover:bg-gray-800'
+                  }`}
                 >
                   <Upload className="w-4 h-4" />
                   <span className="hidden sm:inline">{syncImages ? '完整同步' : '快速同步'} ({selectedSites.length} 站点)</span>

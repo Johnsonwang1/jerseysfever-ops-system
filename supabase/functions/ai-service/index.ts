@@ -16,7 +16,7 @@ const corsHeaders = {
 
 type SiteKey = 'com' | 'uk' | 'de' | 'fr'
 type LanguageKey = 'en' | 'de' | 'fr'
-type GeminiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro'
+type GeminiModel = 'gemini-3-flash-preview' | 'gemini-3-pro-preview'
 
 interface RecognizeAttributesRequest {
   action: 'recognize-attributes'
@@ -139,7 +139,7 @@ async function callGeminiAPI(
 
 async function recognizeAttributes(
   imageBase64: string,
-  model: GeminiModel = 'gemini-2.5-flash',
+  model: GeminiModel = 'gemini-3-flash-preview',
   teamOptions: string[] = []
 ): Promise<any> {
   // 如果提供球队列表，在 prompt 中提示（不用 enum，避免列表太大）
@@ -259,7 +259,7 @@ async function generateContent(
   language: LanguageKey,
   attributes: any,
   generatedTitle: string,
-  model: GeminiModel = 'gemini-2.5-flash'
+  model: GeminiModel = 'gemini-3-pro-preview'
 ): Promise<{ name: string; description: string; short_description: string }> {
   const labels = getFieldLabels(language)
   const normalizedVersion = normalizeVersion(attributes.version)
@@ -458,7 +458,7 @@ Deno.serve(async (req) => {
         console.log('Processing recognize-attributes, model:', body.model)
         const result = await recognizeAttributes(
           body.imageBase64,
-          body.model || 'gemini-2.5-flash',
+          body.model || 'gemini-3-flash-preview',
           body.teamOptions || []
         )
         return new Response(JSON.stringify({ success: true, attributes: result }), {
@@ -473,7 +473,7 @@ Deno.serve(async (req) => {
           body.language,
           body.attributes,
           body.generatedTitle,
-          body.model || 'gemini-2.5-flash'
+          body.model || 'gemini-3-pro-preview'
         )
         return new Response(JSON.stringify({ success: true, content: result }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Package, Users, LogOut, ChevronDown, Menu, X, ShoppingCart, BarChart3, Settings, Palette } from 'lucide-react';
+import { Package, Users, Users2, LogOut, ChevronDown, Menu, X, ShoppingCart, BarChart3, Settings, Palette } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
 
@@ -8,6 +8,7 @@ import { useAuth } from '../lib/auth';
 const navItems = [
   { to: '/products', label: '商品管理', icon: Package, roles: ['admin', 'editor', 'viewer'] },
   { to: '/orders', label: '订单管理', icon: ShoppingCart, roles: ['admin', 'editor', 'viewer'] },
+  { to: '/customers', label: '客户管理', icon: Users2, roles: ['admin'] },
   { to: '/analytics', label: '数据分析', icon: BarChart3, roles: ['admin'] },
   { to: '/ad-creative', label: '广告图设计', icon: Palette, roles: ['admin'] },
   { to: '/users', label: '用户管理', icon: Users, roles: ['admin'] },

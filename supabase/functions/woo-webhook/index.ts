@@ -9,6 +9,7 @@ const corsHeaders = {
 type WebhookTopic =
   | 'product.created' | 'product.updated' | 'product.deleted'
   | 'order.created' | 'order.updated' | 'order.deleted'
+  | 'customer.created' | 'customer.updated' | 'customer.deleted'
 
 // 有效站点
 type Site = 'com' | 'uk' | 'de' | 'fr'
@@ -37,6 +38,13 @@ const SITE_URLS: Record<Site, string> = {
   uk: 'https://jerseysfever.uk',
   de: 'https://jerseysfever.de',
   fr: 'https://jerseysfever.fr',
+}
+
+// 国家到站点映射（用于客户分配）
+const COUNTRY_TO_SITE: Record<string, Site> = {
+  'DE': 'de', 'AT': 'de', 'CH': 'de', 'LI': 'de',
+  'FR': 'fr', 'BE': 'fr', 'LU': 'fr', 'MC': 'fr',
+  'GB': 'uk', 'IE': 'uk', 'IM': 'uk', 'JE': 'uk', 'GG': 'uk', 'GI': 'uk',
 }
 
 // WooCommerce API 凭证（从环境变量获取）
@@ -301,6 +309,186 @@ async function handleOrderWebhook(
   })
 }
 
+// ==================== 客户处理函数 ====================
+
+// 客户分配逻辑：根据地址国家或来源站点分配
+function assignCustomerSite(customer: any, webhookSite: Site): {
+  site: Site;
+  method: string;
+  confidence: number;
+  reason: string;
+} {
+  const shipping = customer.shipping || {}
+  const billing = customer.billing || {}
+
+  // 1. 收货地址国家（最高优先级）
+  if (shipping.country && COUNTRY_TO_SITE[shipping.country]) {
+    return {
+      site: COUNTRY_TO_SITE[shipping.country],
+      method: 'address',
+      confidence: 0.95,
+      reason: `Shipping country: ${shipping.country}`
+    }
+  }
+
+  // 2. 账单地址国家
+  if (billing.country && COUNTRY_TO_SITE[billing.country]) {
+    return {
+      site: COUNTRY_TO_SITE[billing.country],
+      method: 'address',
+      confidence: 0.85,
+      reason: `Billing country: ${billing.country}`
+    }
+  }
+
+  // 3. Webhook 来源站点（用户在哪个站点注册）
+  return {
+    site: webhookSite,
+    method: 'webhook_source',
+    confidence: 0.60,
+    reason: `Registered on: ${webhookSite}`
+  }
+}
+
+// 处理客户 Webhook
+async function handleCustomerWebhook(
+  supabase: any,
+  topic: WebhookTopic,
+  customer: any,
+  webhookSite: Site,
+  deliveryId: string
+): Promise<Response> {
+  const customerId = customer.id
+  const email = (customer.email || '').toLowerCase().trim()
+
+  console.log(`[${deliveryId}] Processing customer webhook: topic=${topic}, site=${webhookSite}, customer_id=${customerId}, email=${email}`)
+
+  if (!email) {
+    console.log(`[${deliveryId}] Customer has no email, skipping`)
+    return new Response(JSON.stringify({ success: true, action: 'skipped', reason: 'no_email' }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+
+  // 处理删除
+  if (topic === 'customer.deleted') {
+    const { data: existing } = await supabase
+      .from('customers')
+      .select('woo_ids')
+      .eq('email', email)
+      .single()
+
+    if (existing) {
+      const newWooIds = { ...existing.woo_ids }
+      delete newWooIds[webhookSite]
+      await supabase.from('customers').update({
+        woo_ids: newWooIds,
+        updated_at: new Date().toISOString(),
+      }).eq('email', email)
+      console.log(`[${deliveryId}] Removed ${webhookSite} woo_id for ${email}`)
+    }
+    return new Response(JSON.stringify({ success: true, action: 'woo_id_removed', email, site: webhookSite }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+
+  // 检查是否已存在
+  const { data: existing } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('email', email)
+    .single()
+
+  const billing = customer.billing || {}
+  const shipping = customer.shipping || {}
+
+  if (existing) {
+    // 更新已存在的客户
+    const updateData: Record<string, any> = {
+      woo_ids: { ...existing.woo_ids, [webhookSite]: customerId },
+      updated_at: new Date().toISOString(),
+      last_synced_at: new Date().toISOString(),
+    }
+
+    // 更新姓名（如果有新数据）
+    if (customer.first_name) updateData.first_name = customer.first_name
+    if (customer.last_name) updateData.last_name = customer.last_name
+
+    // 如果有新的地址信息，更新它
+    if (Object.keys(billing).length > 0) {
+      updateData.billing_address = billing
+    }
+    if (Object.keys(shipping).length > 0) {
+      updateData.shipping_address = shipping
+    }
+
+    // 如果之前没有分配站点，现在分配
+    if (!existing.assigned_site) {
+      const assignment = assignCustomerSite(customer, webhookSite)
+      updateData.assigned_site = assignment.site
+      updateData.assignment_method = assignment.method
+      updateData.assignment_confidence = assignment.confidence
+      updateData.assignment_reason = assignment.reason
+      console.log(`[${deliveryId}] Assigned ${email} to ${assignment.site} (${assignment.method})`)
+    }
+
+    const { error } = await supabase.from('customers').update(updateData).eq('email', email)
+    if (error) {
+      console.error(`[${deliveryId}] Error updating customer:`, error)
+      throw error
+    }
+
+    console.log(`[${deliveryId}] Updated customer ${email}, added ${webhookSite} woo_id`)
+    return new Response(JSON.stringify({ success: true, action: 'updated', email, site: webhookSite }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+
+  // 创建新客户（自动分配站点）
+  const assignment = assignCustomerSite(customer, webhookSite)
+
+  const newCustomer = {
+    email,
+    first_name: customer.first_name || billing.first_name || '',
+    last_name: customer.last_name || billing.last_name || '',
+    phone: billing.phone || null,
+    woo_ids: { [webhookSite]: customerId },
+    billing_address: billing,
+    shipping_address: shipping,
+    assigned_site: assignment.site,
+    assignment_method: assignment.method,
+    assignment_confidence: assignment.confidence,
+    assignment_reason: assignment.reason,
+    order_stats: {
+      total_orders: 0, total_spent: 0,
+      valid_orders: 0, valid_spent: 0,
+      invalid_orders: 0, invalid_spent: 0,
+      first_order_date: null, last_order_date: null,
+      by_site: {},
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_synced_at: new Date().toISOString(),
+  }
+
+  const { error } = await supabase.from('customers').insert(newCustomer)
+  if (error) {
+    console.error(`[${deliveryId}] Error inserting customer:`, error)
+    throw error
+  }
+
+  console.log(`[${deliveryId}] Created customer ${email}, assigned to ${assignment.site} (${assignment.method})`)
+  return new Response(JSON.stringify({
+    success: true,
+    action: 'created',
+    email,
+    assigned_site: assignment.site,
+    assignment_method: assignment.method,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
 // ==================== 主入口 ====================
 
 Deno.serve(async (req) => {
@@ -380,6 +568,17 @@ Deno.serve(async (req) => {
         })
       }
       return await handleOrderWebhook(supabase, topic, data, site, deliveryId)
+    }
+
+    // ==================== 处理客户 Webhook ====================
+    if (topic.startsWith('customer.')) {
+      if (!data || !data.id) {
+        console.log(`[${deliveryId}] Invalid customer data, returning success anyway`)
+        return new Response(JSON.stringify({ success: true, message: 'Received but no valid customer data' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      return await handleCustomerWebhook(supabase, topic, data, site, deliveryId)
     }
 
     // ==================== 处理商品 Webhook ====================
