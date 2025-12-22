@@ -37,7 +37,6 @@ import type {
   CustomerAssignmentMethod,
 } from '../lib/types';
 
-const ALL_SITES: (SiteKey | 'unassigned')[] = ['de', 'com', 'uk', 'fr', 'unassigned'];
 const MIGRATION_STATUSES: CustomerMigrationStatus[] = ['pending', 'migrated', 'skipped', 'error'];
 const ASSIGNMENT_METHODS: (CustomerAssignmentMethod | 'unassigned')[] = ['address', 'email_domain', 'ai_analysis', 'manual', 'unassigned'];
 
@@ -145,7 +144,7 @@ export function CustomersPage() {
 
   // 提取客户
   const handleExtract = async () => {
-    await extractMutation.mutateAsync();
+    await extractMutation.mutateAsync(undefined);
     refetchCustomers();
   };
 

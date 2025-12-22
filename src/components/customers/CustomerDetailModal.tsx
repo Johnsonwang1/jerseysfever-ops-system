@@ -4,11 +4,9 @@ import {
   Mail,
   Phone,
   MapPin,
-  Calendar,
   ShoppingCart,
   Globe,
   Brain,
-  Hand,
   Loader2,
   ChevronRight,
   AlertCircle,
@@ -16,7 +14,7 @@ import {
   Clock,
   XCircle,
 } from 'lucide-react';
-import type { Customer, SiteKey, Order } from '../../lib/types';
+import type { Customer, SiteKey } from '../../lib/types';
 import {
   useCustomer,
   useAssignManually,

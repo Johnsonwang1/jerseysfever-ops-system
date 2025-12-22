@@ -7,8 +7,6 @@ import type {
   CustomerListResponse,
   CustomerStats,
   SiteKey,
-  CustomerMigrationStatus,
-  CustomerAssignmentMethod,
 } from '../lib/types';
 
 // ==================== Query Keys ====================
