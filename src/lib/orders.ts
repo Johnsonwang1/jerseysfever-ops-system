@@ -2,15 +2,21 @@ import { supabase } from './supabase';
 import type { Order, OrderQueryParams, OrderStatus, OrderSyncResult, SiteKey, TrackingInfo } from './types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
-// 调用 Edge Function
-const FUNCTION_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1/woo-sync';
+// 调用 Edge Function（支持多种环境变量命名）
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  || import.meta.env.SUPABASE_URL
+  || import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+  || import.meta.env.SUPABASE_ANON_KEY
+  || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const FUNCTION_URL = supabaseUrl + '/functions/v1/woo-sync';
 
 async function callEdgeFunction(action: string, data: Record<string, unknown> = {}) {
   const response = await fetch(FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      'Authorization': `Bearer ${supabaseAnonKey}`,
     },
     body: JSON.stringify({ action, ...data }),
   });

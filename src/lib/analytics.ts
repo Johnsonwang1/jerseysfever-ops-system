@@ -7,8 +7,11 @@ export interface AnalyticsParams {
   sites?: SiteKey[];
 }
 
-// Edge Function URL
-const ANALYTICS_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sales-analytics`;
+// Edge Function URL（支持多种环境变量命名）
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  || import.meta.env.SUPABASE_URL
+  || import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const ANALYTICS_FUNCTION_URL = `${supabaseUrl}/functions/v1/sales-analytics`;
 
 /**
  * 获取销售分析数据（调用后端 Edge Function）

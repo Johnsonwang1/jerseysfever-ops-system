@@ -195,7 +195,10 @@ export async function syncAllFromAllSites(
 
 // 获取 Webhook URL
 export function getWebhookUrl(): string {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    || import.meta.env.SUPABASE_URL
+    || import.meta.env.NEXT_PUBLIC_SUPABASE_URL
+    || '';
   return `${supabaseUrl}/functions/v1/woo-webhook`;
 }
 

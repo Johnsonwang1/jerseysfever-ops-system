@@ -18,7 +18,10 @@ export interface WebhookInfo {
  * 为所有站点注册 Webhooks（通过 Edge Function）
  */
 export async function registerWebhooksForAllSites(): Promise<Record<SiteKey, { success: boolean; error?: string }>> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    || import.meta.env.SUPABASE_URL
+    || import.meta.env.NEXT_PUBLIC_SUPABASE_URL
+    || '';
   const webhookUrl = `${supabaseUrl}/functions/v1/woo-webhook`;
 
   const { data, error } = await supabase.functions.invoke('woo-sync', {
