@@ -31,11 +31,25 @@ export async function getAnalytics(params: AnalyticsParams): Promise<AnalyticsDa
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || '获取分析数据失败');
+    let errorMessage = '获取分析数据失败';
+    try {
+      const errorText = await response.text();
+      if (errorText) {
+        const error = JSON.parse(errorText);
+        errorMessage = error.error || errorMessage;
+      }
+    } catch {
+      // 忽略 JSON 解析错误
+    }
+    throw new Error(errorMessage);
   }
 
-  const result = await response.json();
+  const responseText = await response.text();
+  if (!responseText) {
+    throw new Error('服务器返回空响应');
+  }
+  
+  const result = JSON.parse(responseText);
 
   // 转换为前端类型
   return {
@@ -86,11 +100,25 @@ export async function getProductRanking(params: AnalyticsParams & { limit?: numb
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || '获取商品排行失败');
+    let errorMessage = '获取商品排行失败';
+    try {
+      const errorText = await response.text();
+      if (errorText) {
+        const error = JSON.parse(errorText);
+        errorMessage = error.error || errorMessage;
+      }
+    } catch {
+      // 忽略 JSON 解析错误
+    }
+    throw new Error(errorMessage);
   }
 
-  const result = await response.json();
+  const responseText = await response.text();
+  if (!responseText) {
+    throw new Error('服务器返回空响应');
+  }
+  
+  const result = JSON.parse(responseText);
   return result.products;
 }
 
