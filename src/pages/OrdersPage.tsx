@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, ChevronDown, Truck, ExternalLink, Copy, Check } from 'lucide-react';
+import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, ChevronDown, Truck, ExternalLink, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { syncOrders, formatCurrency, formatDate, getSiteLabel } from '../lib/orders';
 import { ORDER_STATUS_CONFIG, type Order, type OrderStatus, type SiteKey, type OrderSyncResult } from '../lib/types';

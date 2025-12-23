@@ -385,7 +385,7 @@ export function ProductTable({
                 <td className="px-4 sm:px-5 py-3 sm:py-4">
                   {(() => {
                     const cost = product.cost;
-                    const priceUSD = mainPrice ? parseFloat(mainPrice) : null;
+                    const priceUSD = mainPrice;
                     const priceCNY = priceUSD ? (priceUSD * USD_TO_CNY_RATE).toFixed(0) : null;
 
                     return (

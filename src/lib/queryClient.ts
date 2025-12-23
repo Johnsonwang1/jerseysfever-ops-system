@@ -31,6 +31,10 @@ export const queryKeys = {
       search?: string;
       categories?: string[];
       specialFilters?: string[];
+      types?: string[];
+      versions?: string[];
+      sleeves?: string[];
+      genders?: string[];
     }) => ['products', 'list', filters] as const,
     detail: (sku: string) => ['products', 'detail', sku] as const,
     stats: () => ['products', 'stats'] as const,

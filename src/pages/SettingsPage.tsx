@@ -27,7 +27,7 @@ import {
   useCreateShippingCost,
   useDeleteShippingCost,
 } from '../hooks/useCostConfig';
-import type { CostRule, ExchangeRate, ShippingCost } from '../lib/cost-config';
+import type { CostRule, ShippingCost } from '../lib/cost-config';
 
 // shadcn/ui components
 import { Button } from '@/components/ui/button';

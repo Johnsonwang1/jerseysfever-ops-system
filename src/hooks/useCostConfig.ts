@@ -19,7 +19,6 @@ import {
   createShippingCost,
   deleteShippingCost,
   type CostRule,
-  type HotTeam,
   type ExchangeRate,
   type ShippingCost,
 } from '../lib/cost-config';
