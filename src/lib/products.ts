@@ -74,6 +74,9 @@ export interface LocalProduct {
   variation_counts?: Partial<Record<SiteKey, number>>;
   // 结构: { com: 5, de: 5, ... }
 
+  // 成本（人民币）
+  cost?: number | null;
+
   // 时间戳
   created_at: string;
   updated_at: string;
@@ -105,6 +108,11 @@ export interface ProductQueryParams {
   site?: SiteKey; // 筛选特定站点同步状态
   status?: 'synced' | 'error' | 'pending';
   variationFilter?: VariationFilter; // 变体问题筛选
+  // 新增：属性筛选
+  types?: string[]; // 类型筛选（Home, Away, Third, etc.）
+  versions?: string[]; // 版本筛选（Player Version, Standard, etc.）
+  sleeves?: string[]; // 袖长筛选（Short Sleeve, Long Sleeve, Kit）
+  genders?: string[]; // 性别筛选（Men's, Women's, Kids, Unisex）
 }
 
 // 分页查询结果
@@ -116,7 +124,21 @@ export interface ProductQueryResult {
 
 // 获取商品列表（从本地 Supabase 表）
 export async function getLocalProducts(params: ProductQueryParams = {}): Promise<ProductQueryResult> {
-  const { page = 1, perPage = 20, search, categories, categoryMode = 'or', excludeMode = false, site, status, variationFilter } = params;
+  const { 
+    page = 1, 
+    perPage = 20, 
+    search, 
+    categories, 
+    categoryMode = 'or', 
+    excludeMode = false, 
+    site, 
+    status, 
+    variationFilter,
+    types,
+    versions,
+    sleeves,
+    genders
+  } = params;
   const offset = (page - 1) * perPage;
 
   // 如果是 SKU 不匹配筛选，先获取不匹配的 SKU 列表
@@ -155,6 +177,31 @@ export async function getLocalProducts(params: ProductQueryParams = {}): Promise
       const orConditions = categories.map(cat => `categories.cs.${JSON.stringify([cat])}`).join(',');
       query = query.or(orConditions);
     }
+  }
+
+  // 属性筛选：类型
+  if (types && types.length > 0) {
+    // 筛选 attributes->type 在 types 列表中的商品
+    const typeConditions = types.map(t => `attributes->>type.eq.${t}`).join(',');
+    query = query.or(typeConditions);
+  }
+
+  // 属性筛选：版本
+  if (versions && versions.length > 0) {
+    const versionConditions = versions.map(v => `attributes->>version.eq.${v}`).join(',');
+    query = query.or(versionConditions);
+  }
+
+  // 属性筛选：袖长
+  if (sleeves && sleeves.length > 0) {
+    const sleeveConditions = sleeves.map(s => `attributes->>sleeve.eq.${s}`).join(',');
+    query = query.or(sleeveConditions);
+  }
+
+  // 属性筛选：性别
+  if (genders && genders.length > 0) {
+    const genderConditions = genders.map(g => `attributes->>gender.eq.${g}`).join(',');
+    query = query.or(genderConditions);
   }
 
   // 筛选特定站点的同步状态

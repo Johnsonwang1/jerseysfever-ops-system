@@ -119,6 +119,9 @@ function VariationsModal({
   );
 }
 
+// 汇率：美元/人民币（可根据需要调整）
+const USD_TO_CNY_RATE = 7.2;
+
 export function ProductTable({
   products,
   isLoading,
@@ -317,10 +320,14 @@ export function ProductTable({
               </th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">图片</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">SKU / 商品名称</th>
-              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">价格 (.com)</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">成本 / 价格</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">类目</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">状态</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">赛季</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">类型</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">版本</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">袖长</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">性别</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">变体</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">操作</th>
             </tr>
@@ -374,11 +381,45 @@ export function ProductTable({
                   </div>
                 </td>
 
-                {/* 价格 */}
+                {/* 成本 / 价格 */}
                 <td className="px-4 sm:px-5 py-3 sm:py-4">
-                  <span className="text-sm sm:text-base font-medium">
-                    {mainPrice ? `$${mainPrice}` : '-'}
-                  </span>
+                  {(() => {
+                    const cost = product.cost;
+                    const priceUSD = mainPrice ? parseFloat(mainPrice) : null;
+                    const priceCNY = priceUSD ? (priceUSD * USD_TO_CNY_RATE).toFixed(0) : null;
+
+                    return (
+                      <div className="flex flex-col gap-1">
+                        {/* 成本（人民币） */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-gray-400">成本:</span>
+                          {cost ? (
+                            <span className="text-sm font-medium text-orange-600">¥{cost}</span>
+                          ) : (
+                            <span className="text-sm text-gray-400">-</span>
+                          )}
+                        </div>
+                        {/* 美金价格 */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-gray-400">USD:</span>
+                          {priceUSD ? (
+                            <span className="text-sm font-medium text-green-600">${priceUSD}</span>
+                          ) : (
+                            <span className="text-sm text-gray-400">-</span>
+                          )}
+                        </div>
+                        {/* 人民币价格 */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-gray-400">CNY:</span>
+                          {priceCNY ? (
+                            <span className="text-sm font-medium text-blue-600">¥{priceCNY}</span>
+                          ) : (
+                            <span className="text-sm text-gray-400">-</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </td>
 
                 {/* 类目 */}
@@ -404,11 +445,55 @@ export function ProductTable({
                   </span>
                 </td>
 
-                {/* 属性 */}
+                {/* 赛季 */}
                 <td className="px-4 sm:px-5 py-3 sm:py-4">
                   {product.attributes?.season ? (
                     <span className="px-2.5 py-1 text-xs sm:text-sm bg-blue-50 text-blue-700 rounded-full font-medium whitespace-nowrap">
                       {product.attributes.season}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400">-</span>
+                  )}
+                </td>
+
+                {/* 类型 */}
+                <td className="px-4 sm:px-5 py-3 sm:py-4">
+                  {product.attributes?.type ? (
+                    <span className="px-2.5 py-1 text-xs sm:text-sm bg-purple-50 text-purple-700 rounded-full font-medium whitespace-nowrap">
+                      {product.attributes.type}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400">-</span>
+                  )}
+                </td>
+
+                {/* 版本 */}
+                <td className="px-4 sm:px-5 py-3 sm:py-4">
+                  {product.attributes?.version ? (
+                    <span className="px-2.5 py-1 text-xs sm:text-sm bg-indigo-50 text-indigo-700 rounded-full font-medium whitespace-nowrap">
+                      {product.attributes.version}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400">-</span>
+                  )}
+                </td>
+
+                {/* 袖长 */}
+                <td className="px-4 sm:px-5 py-3 sm:py-4">
+                  {product.attributes?.sleeve ? (
+                    <span className="px-2.5 py-1 text-xs sm:text-sm bg-teal-50 text-teal-700 rounded-full font-medium whitespace-nowrap">
+                      {product.attributes.sleeve}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400">-</span>
+                  )}
+                </td>
+
+                {/* 性别 */}
+                <td className="px-4 sm:px-5 py-3 sm:py-4">
+                  {product.attributes?.gender ? (
+                    <span className="px-2.5 py-1 text-xs sm:text-sm bg-pink-50 text-pink-700 rounded-full font-medium whitespace-nowrap">
+                      {product.attributes.gender}
                     </span>
                   ) : (
                     <span className="text-xs text-gray-400">-</span>

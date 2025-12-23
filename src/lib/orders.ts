@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Order, OrderQueryParams, OrderStatus, OrderSyncResult, SiteKey } from './types';
+import type { Order, OrderQueryParams, OrderStatus, OrderSyncResult, SiteKey, TrackingInfo } from './types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 // 调用 Edge Function
@@ -255,6 +255,17 @@ export async function addOrderNote(
     woo_id: wooId,
     note,
     customer_note: customerNote,
+  });
+}
+
+// 更新物流跟踪信息（调用 Edge Function）
+export async function updateOrderTracking(
+  orderId: string,
+  trackingInfo: TrackingInfo[]
+): Promise<{ success: boolean; error?: string }> {
+  return callEdgeFunction('update-tracking', {
+    orderId,
+    trackingInfo,
   });
 }
 

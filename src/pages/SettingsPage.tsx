@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { Settings, Sparkles, Plus, Pencil, Trash2, Save, X, Loader2, Check, GripVertical, ToggleLeft, ToggleRight, ImageIcon, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Settings, Sparkles, Plus, Pencil, Trash2, Save, X, Loader2, Check, GripVertical, ToggleLeft, ToggleRight, DollarSign, Flame, Truck } from 'lucide-react';
 import { SUPPORTED_MODELS, SUPPORTED_ASPECT_RATIOS, type AIModelId, type AspectRatioId } from '../lib/ai-image';
 import { type PromptTemplate } from '../lib/ai-prompts';
 import { 
@@ -12,12 +12,22 @@ import {
   useTogglePromptTemplate,
   useReorderPromptTemplates
 } from '../hooks/useSettings';
-import { 
-  getImageMigrationStats, 
-  migrateImagesBatch, 
-  type ImageMigrationStats,
-  type MigrationResult 
-} from '../lib/supabase';
+import {
+  useCostRules,
+  useHotTeams,
+  useUpdateCostRule,
+  useCreateCostRule,
+  useDeleteCostRule,
+  useAddHotTeam,
+  useRemoveHotTeam,
+  useExchangeRates,
+  useUpdateExchangeRate,
+  useShippingCosts,
+  useUpdateShippingCost,
+  useCreateShippingCost,
+  useDeleteShippingCost,
+} from '../hooks/useCostConfig';
+import type { CostRule, ExchangeRate, ShippingCost } from '../lib/cost-config';
 
 // shadcn/ui components
 import { Button } from '@/components/ui/button';
@@ -42,26 +52,754 @@ export function SettingsPage() {
       </div>
 
       {/* Tab 导航 */}
-      <Tabs defaultValue="ai" className="space-y-6">
+      <Tabs defaultValue="cost" className="space-y-6">
         <TabsList>
+          <TabsTrigger value="cost" className="gap-2">
+            <DollarSign className="w-4 h-4" />
+            成本配置
+          </TabsTrigger>
           <TabsTrigger value="ai" className="gap-2">
             <Sparkles className="w-4 h-4" />
             AI 配置
           </TabsTrigger>
-          <TabsTrigger value="images" className="gap-2">
-            <ImageIcon className="w-4 h-4" />
-            图片迁移
-          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="cost">
+          <CostConfigTab />
+        </TabsContent>
 
         <TabsContent value="ai">
           <AISettingsTab />
         </TabsContent>
-
-        <TabsContent value="images">
-          <ImageMigrationTab />
-        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// 成本配置 Tab 组件
+function CostConfigTab() {
+  const { data: rules = [], isLoading: rulesLoading } = useCostRules();
+  const { data: hotTeams = [], isLoading: teamsLoading } = useHotTeams();
+  const { data: exchangeRates = [], isLoading: ratesLoading } = useExchangeRates();
+  const { data: shippingCosts = [], isLoading: shippingLoading } = useShippingCosts();
+  const updateRuleMutation = useUpdateCostRule();
+  const createRuleMutation = useCreateCostRule();
+  const deleteRuleMutation = useDeleteCostRule();
+  const addTeamMutation = useAddHotTeam();
+  const removeTeamMutation = useRemoveHotTeam();
+  const updateRateMutation = useUpdateExchangeRate();
+  const updateShippingMutation = useUpdateShippingCost();
+  const createShippingMutation = useCreateShippingCost();
+  const deleteShippingMutation = useDeleteShippingCost();
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingCost, setEditingCost] = useState<string>('');
+  const [newTeam, setNewTeam] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  
+  // 汇率编辑状态
+  const [editingRateId, setEditingRateId] = useState<string | null>(null);
+  const [editingRateValues, setEditingRateValues] = useState<{ usd_cny: string; usd_eur: string; usd_gbp: string }>({ usd_cny: '', usd_eur: '', usd_gbp: '' });
+
+  // 物流成本编辑状态
+  const [editingShippingId, setEditingShippingId] = useState<string | null>(null);
+  const [editingShipping, setEditingShipping] = useState<{ price_per_kg: string; registration_fee: string }>({ price_per_kg: '', registration_fee: '' });
+  const [showAddShipping, setShowAddShipping] = useState(false);
+  const [newShipping, setNewShipping] = useState<Partial<ShippingCost>>({
+    name: '欧美专线小包-P特价',
+    country_code: '',
+    country_name: '',
+    weight_min: 0.1,
+    weight_max: 5,
+    price_per_kg: 70,
+    registration_fee: 30,
+  });
+
+  const loading = rulesLoading || teamsLoading || ratesLoading || shippingLoading;
+  const saving = updateRuleMutation.isPending || createRuleMutation.isPending || 
+                 deleteRuleMutation.isPending || addTeamMutation.isPending || removeTeamMutation.isPending ||
+                 updateRateMutation.isPending || updateShippingMutation.isPending || createShippingMutation.isPending ||
+                 deleteShippingMutation.isPending;
+
+  // 开始编辑成本
+  const startEditing = (rule: CostRule) => {
+    setEditingId(rule.id);
+    setEditingCost(String(rule.cost));
+  };
+
+  // 保存成本
+  const saveCost = async () => {
+    if (!editingId) return;
+    try {
+      await updateRuleMutation.mutateAsync({
+        id: editingId,
+        updates: { cost: parseFloat(editingCost) },
+      });
+      setEditingId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败');
+    }
+  };
+
+  // 切换规则启用状态
+  const toggleRule = async (rule: CostRule) => {
+    try {
+      await updateRuleMutation.mutateAsync({
+        id: rule.id,
+        updates: { enabled: !rule.enabled },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '切换失败');
+    }
+  };
+
+  // 添加热门球队
+  const handleAddTeam = async () => {
+    if (!newTeam.trim()) return;
+    try {
+      await addTeamMutation.mutateAsync(newTeam.trim());
+      setNewTeam('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '添加失败');
+    }
+  };
+
+  // 删除热门球队
+  const handleRemoveTeam = async (id: string) => {
+    try {
+      await removeTeamMutation.mutateAsync(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // 按类别分组规则
+  const kidsRules = rules.filter(r => r.gender?.includes('Kids'));
+  const trainingRules = rules.filter(r => r.type?.includes('Training') || r.type?.includes('Pre-Match') || r.type?.includes('Zipper'));
+  const retroRules = rules.filter(r => r.season?.includes('Retro'));
+  const playerRules = rules.filter(r => r.version?.includes('Player Version'));
+  const specialRules = rules.filter(r => r.version?.includes('Special Edition') || r.type?.includes('Anniversary') || r.type?.includes('Fan Tee') || r.type?.includes('Goalkeeper'));
+  const coldRules = rules.filter(r => r.is_hot_team === false && !r.gender?.includes('Kids') && !r.version?.includes('Player Version'));
+  const hotRules = rules.filter(r => r.is_hot_team === true && !r.gender?.includes('Kids') && !r.version?.includes('Player Version'));
+  const defaultRule = rules.find(r => r.name === '默认成本');
+
+  const renderRuleRow = (rule: CostRule) => (
+    <div
+      key={rule.id}
+      className={`flex items-center justify-between p-3 rounded-lg border ${
+        rule.enabled ? 'bg-background' : 'bg-muted opacity-60'
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <span className={`font-medium ${rule.enabled ? '' : 'text-muted-foreground'}`}>
+          {rule.name}
+        </span>
+        {!rule.enabled && <Badge variant="secondary">禁用</Badge>}
+      </div>
+      <div className="flex items-center gap-2">
+        {editingId === rule.id ? (
+          <>
+            <Input
+              type="number"
+              value={editingCost}
+              onChange={(e) => setEditingCost(e.target.value)}
+              className="w-20 h-8 text-right"
+            />
+            <span className="text-sm text-muted-foreground">元</span>
+            <Button size="icon" variant="ghost" onClick={() => setEditingId(null)}>
+              <X className="w-4 h-4" />
+            </Button>
+            <Button size="icon" onClick={saveCost} disabled={saving}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="font-mono text-lg font-semibold text-orange-600">
+              ¥{Number(rule.cost).toFixed(0)}
+            </span>
+            <Button size="icon" variant="ghost" onClick={() => startEditing(rule)}>
+              <Pencil className="w-4 h-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => toggleRule(rule)}
+              className={rule.enabled ? 'text-green-600' : 'text-muted-foreground'}
+            >
+              {rule.enabled ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* 错误提示 */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between">
+            {error}
+            <Button variant="ghost" size="sm" onClick={() => setError(null)}>关闭</Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* 成本规则 */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* 成人热门球队 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Flame className="w-4 h-4 text-orange-500" />
+              成人热门球队
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {hotRules.map(renderRuleRow)}
+          </CardContent>
+        </Card>
+
+        {/* 成人冷门球队 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">成人冷门球队</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {coldRules.map(renderRuleRow)}
+          </CardContent>
+        </Card>
+
+        {/* 儿童款 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">👶 儿童款</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {kidsRules.map(renderRuleRow)}
+          </CardContent>
+        </Card>
+
+        {/* 球员版 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">⭐ 球员版</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {playerRules.filter(r => !r.gender?.includes('Kids')).map(renderRuleRow)}
+          </CardContent>
+        </Card>
+
+        {/* 特殊类型 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">🎯 特殊类型</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {trainingRules.filter(r => !r.gender?.includes('Kids')).map(renderRuleRow)}
+            {retroRules.map(renderRuleRow)}
+            {specialRules.map(renderRuleRow)}
+            {defaultRule && renderRuleRow(defaultRule)}
+          </CardContent>
+        </Card>
+
+        {/* 热门球队管理 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Flame className="w-4 h-4 text-orange-500" />
+              热门球队列表
+            </CardTitle>
+            <CardDescription>
+              在此列表中的球队使用热门球队成本
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2 mb-4">
+              <Input
+                value={newTeam}
+                onChange={(e) => setNewTeam(e.target.value)}
+                placeholder="输入球队名称"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddTeam()}
+              />
+              <Button onClick={handleAddTeam} disabled={saving || !newTeam.trim()}>
+                <Plus className="w-4 h-4 mr-1" />
+                添加
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto">
+              {hotTeams.map((team) => (
+                <Badge
+                  key={team.id}
+                  variant="secondary"
+                  className="flex items-center gap-1 py-1 px-2"
+                >
+                  {team.team_name}
+                  <button
+                    onClick={() => handleRemoveTeam(team.id)}
+                    className="ml-1 hover:text-destructive"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 成本汇总表 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>📊 成本汇总表</CardTitle>
+          <CardDescription>所有价格单位：人民币 (RMB)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left py-2 px-3 font-medium">类型</th>
+                  <th className="text-right py-2 px-3 font-medium">成本</th>
+                  <th className="text-left py-2 px-3 font-medium">条件</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rules
+                  .filter(r => r.enabled)
+                  .sort((a, b) => b.priority - a.priority)
+                  .map((rule) => (
+                    <tr key={rule.id} className="border-b hover:bg-muted/50">
+                      <td className="py-2 px-3">{rule.name}</td>
+                      <td className="py-2 px-3 text-right font-mono text-orange-600">
+                        ¥{Number(rule.cost).toFixed(0)}
+                      </td>
+                      <td className="py-2 px-3 text-muted-foreground text-xs">
+                        {[
+                          rule.is_hot_team === true && '热门',
+                          rule.is_hot_team === false && '冷门',
+                          rule.gender?.join('/'),
+                          rule.version?.join('/'),
+                          rule.sleeve?.join('/'),
+                          rule.type?.join('/'),
+                          rule.season?.join('/'),
+                        ].filter(Boolean).join(' · ') || '-'}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 汇率表 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>💱 月度汇率表</CardTitle>
+          <CardDescription>以 USD 为基准的月初汇率（商品管理用最新汇率，订单用对应月份汇率）</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto max-h-96">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-background">
+                <tr className="border-b">
+                  <th className="text-left py-2 px-3 font-medium">月份</th>
+                  <th className="text-right py-2 px-3 font-medium">USD → CNY</th>
+                  <th className="text-right py-2 px-3 font-medium">USD → EUR</th>
+                  <th className="text-right py-2 px-3 font-medium">USD → GBP</th>
+                  <th className="text-center py-2 px-3 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exchangeRates.map((rate) => {
+                  const isCurrentMonth = rate.month === new Date().toISOString().slice(0, 7);
+                  const isEditing = editingRateId === rate.id;
+                  
+                  return (
+                    <tr key={rate.id} className={`border-b hover:bg-muted/50 ${isCurrentMonth ? 'bg-green-50' : ''}`}>
+                      <td className="py-2 px-3">
+                        <span className={isCurrentMonth ? 'font-semibold text-green-700' : ''}>
+                          {rate.month}
+                        </span>
+                        {isCurrentMonth && <Badge variant="outline" className="ml-2 text-xs">当前</Badge>}
+                      </td>
+                      {isEditing ? (
+                        <>
+                          <td className="py-2 px-3">
+                            <Input
+                              type="number"
+                              step="0.0001"
+                              value={editingRateValues.usd_cny}
+                              onChange={(e) => setEditingRateValues(v => ({ ...v, usd_cny: e.target.value }))}
+                              className="w-24 h-7 text-right text-sm"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <Input
+                              type="number"
+                              step="0.0001"
+                              value={editingRateValues.usd_eur}
+                              onChange={(e) => setEditingRateValues(v => ({ ...v, usd_eur: e.target.value }))}
+                              className="w-24 h-7 text-right text-sm"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <Input
+                              type="number"
+                              step="0.0001"
+                              value={editingRateValues.usd_gbp}
+                              onChange={(e) => setEditingRateValues(v => ({ ...v, usd_gbp: e.target.value }))}
+                              className="w-24 h-7 text-right text-sm"
+                            />
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={() => setEditingRateId(null)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                className="h-7 w-7"
+                                disabled={saving}
+                                onClick={async () => {
+                                  try {
+                                    await updateRateMutation.mutateAsync({
+                                      id: rate.id,
+                                      updates: {
+                                        usd_cny: parseFloat(editingRateValues.usd_cny),
+                                        usd_eur: parseFloat(editingRateValues.usd_eur),
+                                        usd_gbp: parseFloat(editingRateValues.usd_gbp),
+                                      },
+                                    });
+                                    setEditingRateId(null);
+                                  } catch (err) {
+                                    setError(err instanceof Error ? err.message : '保存失败');
+                                  }
+                                }}
+                              >
+                                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                              </Button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-2 px-3 text-right font-mono text-blue-600">
+                            {Number(rate.usd_cny).toFixed(4)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-purple-600">
+                            {Number(rate.usd_eur).toFixed(4)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-green-600">
+                            {Number(rate.usd_gbp).toFixed(4)}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              onClick={() => {
+                                setEditingRateId(rate.id);
+                                setEditingRateValues({
+                                  usd_cny: String(rate.usd_cny),
+                                  usd_eur: String(rate.usd_eur),
+                                  usd_gbp: String(rate.usd_gbp),
+                                });
+                              }}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 物流成本配置 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Truck className="w-5 h-5 text-blue-500" />
+            🚚 物流成本配置
+          </CardTitle>
+          <CardDescription>按收货国家设置物流成本（元/人民币），用于分析销售利润</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {/* 添加新物流成本按钮 */}
+          <div className="mb-4">
+            {!showAddShipping ? (
+              <Button onClick={() => setShowAddShipping(true)} variant="outline" size="sm">
+                <Plus className="w-4 h-4 mr-1" />
+                添加国家
+              </Button>
+            ) : (
+              <div className="p-4 border rounded-lg bg-muted/50 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground">国家代码</label>
+                    <Input
+                      value={newShipping.country_code || ''}
+                      onChange={(e) => setNewShipping(v => ({ ...v, country_code: e.target.value.toUpperCase() }))}
+                      placeholder="如 DE, FR"
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">国家名称</label>
+                    <Input
+                      value={newShipping.country_name || ''}
+                      onChange={(e) => setNewShipping(v => ({ ...v, country_name: e.target.value }))}
+                      placeholder="如 德国"
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">单价 (元/kg)</label>
+                    <Input
+                      type="number"
+                      value={newShipping.price_per_kg || ''}
+                      onChange={(e) => setNewShipping(v => ({ ...v, price_per_kg: parseFloat(e.target.value) || 0 }))}
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">挂号费 (元/件)</label>
+                    <Input
+                      type="number"
+                      value={newShipping.registration_fee || ''}
+                      onChange={(e) => setNewShipping(v => ({ ...v, registration_fee: parseFloat(e.target.value) || 0 }))}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await createShippingMutation.mutateAsync({
+                          name: newShipping.name || '欧美专线小包-P特价',
+                          country_code: newShipping.country_code || '',
+                          country_name: newShipping.country_name || '',
+                          weight_min: newShipping.weight_min || 0.1,
+                          weight_max: newShipping.weight_max || 5,
+                          price_per_kg: newShipping.price_per_kg || 70,
+                          registration_fee: newShipping.registration_fee || 30,
+                          enabled: true,
+                        });
+                        setShowAddShipping(false);
+                        setNewShipping({
+                          name: '欧美专线小包-P特价',
+                          country_code: '',
+                          country_name: '',
+                          weight_min: 0.1,
+                          weight_max: 5,
+                          price_per_kg: 70,
+                          registration_fee: 30,
+                        });
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : '添加失败');
+                      }
+                    }}
+                    disabled={saving || !newShipping.country_code || !newShipping.country_name}
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 mr-1" />}
+                    保存
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setShowAddShipping(false)}>
+                    取消
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 物流成本表格 */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left py-2 px-3 font-medium">国家</th>
+                  <th className="text-right py-2 px-3 font-medium">单价 (元/kg)</th>
+                  <th className="text-right py-2 px-3 font-medium">挂号费 (元/件)</th>
+                  <th className="text-right py-2 px-3 font-medium">单件成本*</th>
+                  <th className="text-center py-2 px-3 font-medium">状态</th>
+                  <th className="text-center py-2 px-3 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shippingCosts.map((sc) => {
+                  const isEditing = editingShippingId === sc.id;
+                  // 按 0.3kg 计算单件成本
+                  const unitCost = (sc.price_per_kg * 0.3) + sc.registration_fee;
+                  
+                  return (
+                    <tr key={sc.id} className={`border-b hover:bg-muted/50 ${!sc.enabled ? 'opacity-50' : ''}`}>
+                      <td className="py-2 px-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{sc.country_code}</span>
+                          <span>{sc.country_name}</span>
+                        </div>
+                      </td>
+                      {isEditing ? (
+                        <>
+                          <td className="py-2 px-3">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={editingShipping.price_per_kg}
+                              onChange={(e) => setEditingShipping(v => ({ ...v, price_per_kg: e.target.value }))}
+                              className="w-20 h-7 text-right text-sm"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={editingShipping.registration_fee}
+                              onChange={(e) => setEditingShipping(v => ({ ...v, registration_fee: e.target.value }))}
+                              className="w-20 h-7 text-right text-sm"
+                            />
+                          </td>
+                          <td className="py-2 px-3 text-right text-muted-foreground">-</td>
+                          <td className="py-2 px-3 text-center">-</td>
+                          <td className="py-2 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={() => setEditingShippingId(null)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                className="h-7 w-7"
+                                disabled={saving}
+                                onClick={async () => {
+                                  try {
+                                    await updateShippingMutation.mutateAsync({
+                                      id: sc.id,
+                                      updates: {
+                                        price_per_kg: parseFloat(editingShipping.price_per_kg),
+                                        registration_fee: parseFloat(editingShipping.registration_fee),
+                                      },
+                                    });
+                                    setEditingShippingId(null);
+                                  } catch (err) {
+                                    setError(err instanceof Error ? err.message : '保存失败');
+                                  }
+                                }}
+                              >
+                                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                              </Button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-2 px-3 text-right font-mono text-blue-600">
+                            ¥{Number(sc.price_per_kg).toFixed(0)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-purple-600">
+                            ¥{Number(sc.registration_fee).toFixed(0)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-orange-600">
+                            ¥{unitCost.toFixed(1)}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              onClick={async () => {
+                                try {
+                                  await updateShippingMutation.mutateAsync({
+                                    id: sc.id,
+                                    updates: { enabled: !sc.enabled },
+                                  });
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : '切换失败');
+                                }
+                              }}
+                            >
+                              {sc.enabled ? (
+                                <ToggleRight className="w-5 h-5 text-green-600" />
+                              ) : (
+                                <ToggleLeft className="w-5 h-5 text-muted-foreground" />
+                              )}
+                            </Button>
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={() => {
+                                  setEditingShippingId(sc.id);
+                                  setEditingShipping({
+                                    price_per_kg: String(sc.price_per_kg),
+                                    registration_fee: String(sc.registration_fee),
+                                  });
+                                }}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 text-red-500 hover:text-red-600"
+                                onClick={async () => {
+                                  if (confirm(`确认删除 ${sc.country_name} 的物流成本配置？`)) {
+                                    try {
+                                      await deleteShippingMutation.mutateAsync(sc.id);
+                                    } catch (err) {
+                                      setError(err instanceof Error ? err.message : '删除失败');
+                                    }
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            * 单件成本 = 单价 × 0.3kg（球衣默认重量）+ 挂号费
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -493,228 +1231,6 @@ function AISettingsTab() {
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// 图片迁移 Tab 组件
-function ImageMigrationTab() {
-  const [stats, setStats] = useState<ImageMigrationStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [migrating, setMigrating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [results, setResults] = useState<MigrationResult[]>([]);
-
-  // 加载统计信息
-  const loadStats = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await getImageMigrationStats();
-      setStats(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '获取统计信息失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadStats();
-  }, []);
-
-  // 开始批量迁移
-  const startMigration = async () => {
-    if (migrating) return;
-    
-    try {
-      setMigrating(true);
-      setError(null);
-      setResults([]);
-      setProgress({ current: 0, total: stats?.productsNeedMigration || 0 });
-
-      let offset = 0;
-      const limit = 20; // 每批处理 20 个
-      let hasMore = true;
-      const allResults: MigrationResult[] = [];
-
-      while (hasMore) {
-        const result = await migrateImagesBatch(limit, offset);
-        allResults.push(...result.results);
-        setResults([...allResults]);
-        setProgress({ 
-          current: allResults.length, 
-          total: stats?.productsNeedMigration || result.total 
-        });
-        
-        hasMore = result.hasMore && result.results.length > 0;
-        offset += limit;
-
-        // 短暂暂停，避免过载
-        if (hasMore) {
-          await new Promise(r => setTimeout(r, 500));
-        }
-      }
-
-      // 迁移完成，刷新统计
-      await loadStats();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '迁移失败');
-    } finally {
-      setMigrating(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  const successCount = results.filter(r => r.success).length;
-  const failedCount = results.filter(r => !r.success).length;
-  const totalMigrated = results.reduce((sum, r) => sum + r.migrated, 0);
-
-  return (
-    <div className="space-y-6">
-      {/* 错误提示 */}
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="w-4 h-4" />
-          <AlertDescription className="flex items-center justify-between">
-            {error}
-            <Button variant="ghost" size="sm" onClick={() => setError(null)}>
-              关闭
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* 统计卡片 */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <ImageIcon className="w-5 h-5 text-blue-500" />
-                图片存储迁移
-              </CardTitle>
-              <CardDescription className="mt-1">
-                将产品图片从 WooCommerce (.com) 迁移到 Supabase Storage
-              </CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={loadStats}
-              disabled={loading || migrating}
-            >
-              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-              刷新
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {stats && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-              <div className="p-4 bg-muted rounded-xl text-center">
-                <div className="text-2xl font-bold">{stats.totalProducts}</div>
-                <div className="text-sm text-muted-foreground">总产品数</div>
-              </div>
-              <div className="p-4 bg-muted rounded-xl text-center">
-                <div className="text-2xl font-bold">{stats.totalImages}</div>
-                <div className="text-sm text-muted-foreground">总图片数</div>
-              </div>
-              <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl text-center">
-                <div className="text-2xl font-bold text-orange-600">{stats.imagesOnCom}</div>
-                <div className="text-sm text-orange-600">待迁移图片</div>
-              </div>
-              <div className="p-4 bg-green-50 border border-green-200 rounded-xl text-center">
-                <div className="text-2xl font-bold text-green-600">{stats.imagesOnStorage}</div>
-                <div className="text-sm text-green-600">已在 Storage</div>
-              </div>
-            </div>
-          )}
-
-          {/* 迁移进度 */}
-          {migrating && (
-            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-blue-700">迁移中...</span>
-                <span className="text-sm text-blue-600">
-                  {progress.current} / {progress.total} 产品
-                </span>
-              </div>
-              <div className="w-full bg-blue-200 rounded-full h-2">
-                <div 
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* 迁移结果 */}
-          {results.length > 0 && !migrating && (
-            <div className="mb-6 p-4 bg-muted rounded-xl">
-              <div className="flex items-center gap-4 mb-2">
-                <div className="flex items-center gap-1 text-green-600">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span className="font-medium">{successCount} 成功</span>
-                </div>
-                {failedCount > 0 && (
-                  <div className="flex items-center gap-1 text-red-600">
-                    <AlertCircle className="w-4 h-4" />
-                    <span className="font-medium">{failedCount} 失败</span>
-                  </div>
-                )}
-                <div className="text-muted-foreground">
-                  共迁移 {totalMigrated} 张图片
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 操作按钮 */}
-          <div className="flex items-center gap-4">
-            <Button
-              onClick={startMigration}
-              disabled={migrating || (stats?.productsNeedMigration ?? 0) === 0}
-              className="gap-2"
-            >
-              {migrating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <ImageIcon className="w-4 h-4" />
-              )}
-              {migrating ? '迁移中...' : `开始迁移 (${stats?.productsNeedMigration ?? 0} 个产品)`}
-            </Button>
-            
-            {(stats?.productsNeedMigration ?? 0) === 0 && (stats?.totalImages ?? 0) > 0 && (
-              <div className="flex items-center gap-2 text-green-600">
-                <CheckCircle2 className="w-5 h-5" />
-                <span>所有图片已迁移到 Storage</span>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 说明 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">迁移说明</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>• 迁移会将 <code className="bg-muted px-1 py-0.5 rounded">jerseysfever.com</code> 上的图片转存到 Supabase Storage</p>
-          <p>• 使用 MD5 哈希自动去重，相同图片不会重复存储</p>
-          <p>• 迁移完成后，新发布的商品会自动使用 Storage 图片</p>
-          <p>• 原有 WooCommerce 图片不受影响，可继续使用</p>
         </CardContent>
       </Card>
     </div>

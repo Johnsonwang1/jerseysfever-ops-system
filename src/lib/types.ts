@@ -206,6 +206,14 @@ export interface ShippingLine {
   total: number;
 }
 
+// 物流跟踪信息
+export interface TrackingInfo {
+  carrier: string;           // 物流商名称 (如 DHL, FedEx, 17Track)
+  tracking_number: string;   // 运单号
+  tracking_url?: string;     // 跟踪链接
+  date_shipped?: string;     // 发货日期 (ISO 格式)
+}
+
 // 订单（数据库格式）
 export interface Order {
   id: string;
@@ -232,6 +240,14 @@ export interface Order {
   created_at: string;
   updated_at: string;
   last_synced_at: string | null;
+  tracking_info: TrackingInfo[];  // 物流跟踪信息
+  order_source: string | null;    // 订单来源（兼容旧字段）
+  // 订单归属信息
+  attribution_source_type: string | null;  // 来源类型：organic, direct, paid, referral
+  attribution_utm_source: string | null;   // UTM来源：google, facebook 等
+  attribution_device_type: string | null;  // 设备类型：Desktop, Mobile
+  attribution_session_pages: number | null; // 会话页面浏览量
+  attribution_referrer: string | null;      // 引荐来源URL
 }
 
 // 订单查询参数
@@ -255,12 +271,54 @@ export interface OrderSyncResult {
 }
 
 // 销售分析数据
+// 各站点原始货币销售额
+export interface SiteRevenue {
+  site: SiteKey;
+  currency: string;          // 'USD' | 'EUR' | 'GBP'
+  revenue: number;           // 原始货币销售额
+  refunds: number;           // 原始货币退款额
+  orderCount: number;        // 订单数
+  itemCount: number;         // 销售件数
+}
+
+// 发货前退款统计
+export interface RefundBeforeShip {
+  ratio: number;             // 发货前退款比例（72%）
+  amount: number;            // 发货前退款金额
+  costSaved: number;         // 节省的成本（采购+物流）
+}
+
+// 发货后退款统计
+export interface RefundAfterShip {
+  ratio: number;             // 发货后退款比例（28%）
+  amount: number;            // 发货后退款金额
+  costLoss: number;          // 损失的成本（采购+物流）
+}
+
 export interface AnalyticsData {
   orderCount: number;        // 有效订单数
   itemCount: number;         // 销售件数
-  revenue: number;           // 销售额
-  refunds: number;           // 退款额
-  refundCount: number;       // 退款订单数
+  // 收入
+  grossRevenue?: number;     // 毛收入（有效订单总收入）
+  estimatedRefund?: number;  // 预估退款（基于 PayPal 退款率）
+  netRevenue?: number;       // 净收入 = 毛收入 - 预估退款
+  revenue: number;           // 净收入（兼容旧字段）
+  refunds: number;           // 预估退款（兼容旧字段）
+  refundCount: number;       // 预估退款订单数
+  // 成本（已根据退款率调整）
+  productCost: number;       // 采购成本（USD）
+  shippingCost: number;      // 物流成本（USD）
+  platformFee: number;       // 平台手续费（USD）
+  totalCost: number;         // 总成本（USD）= 采购 + 物流 + 手续费
+  // 利润
+  grossProfit: number;       // 毛利润（USD）= 净收入 - 总成本
+  grossProfitRate?: number;  // 毛利率 = 毛利润 / 毛收入 × 100%
+  // 退款率和分类明细
+  refundRate?: number;       // 退款率（基于 PayPal 数据，约 8%）
+  refundBeforeShip?: RefundBeforeShip;  // 发货前退款明细
+  refundAfterShip?: RefundAfterShip;    // 发货后退款明细
+  // 各站点原始货币明细
+  siteRevenues: SiteRevenue[];
   // 按日期分组的数据（用于图表）
   dailyStats: DailyStat[];
 }
@@ -269,8 +327,14 @@ export interface DailyStat {
   date: string;              // YYYY-MM-DD
   orderCount: number;
   itemCount: number;
-  revenue: number;
-  refunds: number;
+  revenue: number;           // 毛收入
+  refunds: number;           // 退款金额
+  productCost: number;       // 采购成本
+  shippingCost: number;      // 物流成本
+  platformFee: number;       // 平台手续费
+  cost: number;              // 总成本（不含广告）
+  netRevenue?: number;       // 净收入 = revenue - refunds
+  profit?: number;           // 毛利润 = netRevenue - cost
 }
 
 // 商品销量统计
@@ -279,7 +343,12 @@ export interface ProductStat {
   name: string;
   image: string;             // 商品图片 URL
   quantity: number;          // 销售件数
-  revenue: number;           // 销售收入
+  revenue: number;           // 销售收入（USD）
+  productCost: number;       // 采购成本（USD）
+  shippingCost: number;      // 物流成本（USD）
+  platformFee: number;       // 平台手续费（USD）
+  cost: number;              // 总成本（USD）
+  profit: number;            // 毛利润（USD）= 收入 - 成本
   refundQuantity: number;    // 退款件数
   refundAmount: number;      // 退款金额
   orderCount: number;        // 订单数（出现在多少个订单中）

@@ -56,6 +56,24 @@ export function ProductsPage() {
   // 特殊筛选状态
   const [specialFilters, setSpecialFilters] = useState<SpecialFilter[]>(getInitialFilters);
 
+  // 属性筛选状态
+  const [typeFilter, setTypeFilter] = useState<string[]>(() => {
+    const types = searchParams.get('types');
+    return types ? types.split(',') : [];
+  });
+  const [versionFilter, setVersionFilter] = useState<string[]>(() => {
+    const versions = searchParams.get('versions');
+    return versions ? versions.split(',') : [];
+  });
+  const [sleeveFilter, setSleeveFilter] = useState<string[]>(() => {
+    const sleeves = searchParams.get('sleeves');
+    return sleeves ? sleeves.split(',') : [];
+  });
+  const [genderFilter, setGenderFilter] = useState<string[]>(() => {
+    const genders = searchParams.get('genders');
+    return genders ? genders.split(',') : [];
+  });
+
   // React Query hooks
   const { data: statsData, refetch: refetchStats } = useProductStats();
   const { data: aiPendingSkusData } = useAiPendingSkus();
@@ -77,6 +95,10 @@ export function ProductsPage() {
     excludeMode: categoryFilter.length > 0 ? excludeMode : undefined,
     specialFilters: specialFilters.length > 0 ? specialFilters : undefined,
     aiPendingSkus,
+    types: typeFilter.length > 0 ? typeFilter : undefined,
+    versions: versionFilter.length > 0 ? versionFilter : undefined,
+    sleeves: sleeveFilter.length > 0 ? sleeveFilter : undefined,
+    genders: genderFilter.length > 0 ? genderFilter : undefined,
   });
   
   // Realtime 订阅（自动 invalidate）
@@ -104,10 +126,14 @@ export function ProductsPage() {
     if (searchQuery) params.set('q', searchQuery);
     if (categoryFilter.length > 0) params.set('cat', categoryFilter.join(','));
     if (specialFilters.length > 0) params.set('filter', specialFilters.join(','));
+    if (typeFilter.length > 0) params.set('types', typeFilter.join(','));
+    if (versionFilter.length > 0) params.set('versions', versionFilter.join(','));
+    if (sleeveFilter.length > 0) params.set('sleeves', sleeveFilter.join(','));
+    if (genderFilter.length > 0) params.set('genders', genderFilter.join(','));
     if (page > 1) params.set('page', page.toString());
     
     setSearchParams(params, { replace: true });
-  }, [searchQuery, categoryFilter, specialFilters, page, setSearchParams]);
+  }, [searchQuery, categoryFilter, specialFilters, typeFilter, versionFilter, sleeveFilter, genderFilter, page, setSearchParams]);
 
   // 弹窗状态
   const [selectedProduct, setSelectedProduct] = useState<LocalProduct | null>(null);
@@ -661,10 +687,22 @@ export function ProductsPage() {
     setCategoryFilter([]);
     setExcludeMode(false);
     setSpecialFilters([]);
+    setTypeFilter([]);
+    setVersionFilter([]);
+    setSleeveFilter([]);
+    setGenderFilter([]);
     setPage(1);
   };
 
-  const hasFilters = Boolean(searchQuery || categoryFilter.length > 0 || specialFilters.length > 0);
+  const hasFilters = Boolean(
+    searchQuery || 
+    categoryFilter.length > 0 || 
+    specialFilters.length > 0 ||
+    typeFilter.length > 0 ||
+    versionFilter.length > 0 ||
+    sleeveFilter.length > 0 ||
+    genderFilter.length > 0
+  );
 
   return (
     <div className="h-full flex flex-col overflow-auto">
@@ -830,6 +868,26 @@ export function ProductsPage() {
           specialFilters={specialFilters}
           onSpecialFiltersChange={(filters) => {
             setSpecialFilters(filters);
+            setPage(1);
+          }}
+          typeFilter={typeFilter}
+          versionFilter={versionFilter}
+          sleeveFilter={sleeveFilter}
+          genderFilter={genderFilter}
+          onTypeFilterChange={(types) => {
+            setTypeFilter(types);
+            setPage(1);
+          }}
+          onVersionFilterChange={(versions) => {
+            setVersionFilter(versions);
+            setPage(1);
+          }}
+          onSleeveFilterChange={(sleeves) => {
+            setSleeveFilter(sleeves);
+            setPage(1);
+          }}
+          onGenderFilterChange={(genders) => {
+            setGenderFilter(genders);
             setPage(1);
           }}
         /></div>

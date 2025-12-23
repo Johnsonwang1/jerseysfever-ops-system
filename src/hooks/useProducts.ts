@@ -47,6 +47,10 @@ export function useProducts(params: ProductQueryParams & {
       search: queryParams.search,
       categories: queryParams.categories,
       specialFilters,
+      types: queryParams.types,
+      versions: queryParams.versions,
+      sleeves: queryParams.sleeves,
+      genders: queryParams.genders,
     }),
     queryFn: async () => {
       // 如果有数据库端变体筛选，传递给后端

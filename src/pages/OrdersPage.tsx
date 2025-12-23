@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
-import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Loader2, AlertCircle, RefreshCw, Search, X, Filter, ChevronDown, Truck, ExternalLink, Copy, Check } from 'lucide-react';
+import { toast } from 'sonner';
 import { syncOrders, formatCurrency, formatDate, getSiteLabel } from '../lib/orders';
 import { ORDER_STATUS_CONFIG, type Order, type OrderStatus, type SiteKey, type OrderSyncResult } from '../lib/types';
 import { OrderDetailModal } from '../components/OrderDetailModal';
@@ -302,7 +303,7 @@ export function OrdersPage() {
                 {hasFilters ? '没有符合条件的订单' : '暂无订单，点击同步按钮从 WooCommerce 获取订单'}
               </div>
             ) : (
-              <table className="w-full min-w-[900px]">
+              <table className="w-full min-w-[1200px]">
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
                     <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">订单号</th>
@@ -312,6 +313,8 @@ export function OrdersPage() {
                     <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">金额</th>
                     <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">支付方式</th>
                     <th className="px-4 sm:px-5 py-3 sm:py-4 text-center text-xs font-medium text-gray-500 uppercase whitespace-nowrap">状态</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">来源</th>
+                    <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">物流</th>
                     <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">创建时间</th>
                   </tr>
                 </thead>
@@ -365,6 +368,76 @@ export function OrdersPage() {
                         >
                           {ORDER_STATUS_CONFIG[order.status]?.label || order.status}
                         </span>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4">
+                        <div className="flex flex-col gap-1">
+                          {/* 来源类型 */}
+                          {order.attribution_source_type ? (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${
+                              order.attribution_source_type === 'organic' ? 'bg-green-50 text-green-700' :
+                              order.attribution_source_type === 'direct' ? 'bg-blue-50 text-blue-700' :
+                              order.attribution_source_type === 'paid' ? 'bg-purple-50 text-purple-700' :
+                              order.attribution_source_type === 'referral' ? 'bg-orange-50 text-orange-700' :
+                              'bg-gray-50 text-gray-600'
+                            }`}>
+                              {order.attribution_source_type}
+                              {order.attribution_utm_source && ` / ${order.attribution_utm_source}`}
+                            </span>
+                          ) : order.order_source ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-50 text-gray-600">
+                              {order.order_source}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
+                          )}
+                          {/* 设备类型 */}
+                          {order.attribution_device_type && (
+                            <span className="text-xs text-gray-500">
+                              {order.attribution_device_type === 'Desktop' ? '💻' : 
+                               order.attribution_device_type === 'Mobile' ? '📱' : '📟'} {order.attribution_device_type}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 sm:px-5 py-3 sm:py-4" onClick={(e) => e.stopPropagation()}>
+                        {order.tracking_info && order.tracking_info.length > 0 ? (
+                          <div className="flex flex-col gap-2">
+                            {order.tracking_info.map((tracking, idx) => (
+                              <div key={idx} className="flex items-center gap-2 group">
+                                <Truck className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                                <span className="text-xs text-gray-500 whitespace-nowrap">
+                                  {tracking.carrier}
+                                </span>
+                                <code className="text-xs font-mono bg-gray-100 px-2 py-1 rounded select-all">
+                                  {tracking.tracking_number}
+                                </code>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(tracking.tracking_number);
+                                    toast.success('已复制运单号');
+                                  }}
+                                  className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="复制运单号"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                                {tracking.tracking_url && (
+                                  <a
+                                    href={tracking.tracking_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded"
+                                    title="查询物流"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">-</span>
+                        )}
                       </td>
                       <td className="px-4 sm:px-5 py-3 sm:py-4 text-sm sm:text-base text-gray-500">
                         {formatDate(order.date_created)}

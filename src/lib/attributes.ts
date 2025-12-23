@@ -10,7 +10,7 @@ export const SIZE_OPTIONS = {
 export const ATTRIBUTE_OPTIONS = {
   gender: ["Men's", "Women's", "Kids", "Unisex"],
   season: ['2025/26', '2024/25', '2023/24', '2022/23', 'World Cup 2026', 'Retro'],
-  type: ['Home', 'Away', 'Third', 'Fourth', 'Goalkeeper', 'Training', 'Pre-Match', 'Fan Tee', 'Anniversary'],
+  type: ['Home', 'Away', 'Third', 'Fourth', 'Goalkeeper', 'Training', 'Pre-Match', 'Fan Tee', 'Anniversary', 'Zipper'],
   version: ['Player Version', 'Standard', 'Special Edition', 'Retro'],
   sleeve: ['Short Sleeve', 'Long Sleeve', 'Kit'],
   event: ['Regular', 'Champions League', 'Euro Cup 2024', 'Copa America 2024', 'World Cup 2022', 'World Cup 2026', 'Africa Cup 2026', 'Gold Cup'],

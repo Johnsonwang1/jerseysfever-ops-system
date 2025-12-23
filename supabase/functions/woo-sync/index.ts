@@ -158,6 +158,18 @@ interface GetOrderRequest {
   woo_id: number
 }
 
+// 更新物流信息请求
+interface UpdateTrackingRequest {
+  action: 'update-tracking'
+  orderId: string  // 数据库中的订单 ID
+  trackingInfo: Array<{
+    carrier: string
+    tracking_number: string
+    tracking_url?: string
+    date_shipped?: string
+  }>
+}
+
 // 获取商品变体请求
 interface GetVariationsRequest {
   action: 'get-variations'
@@ -188,7 +200,7 @@ interface SyncVideoRequest {
   videoUrl: string | null  // null 表示清除视频
 }
 
-type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | ListWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest | SyncVideoRequest
+type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | ListWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | UpdateTrackingRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest | SyncVideoRequest
 
 interface SyncResult {
   site: SiteKey
@@ -2341,6 +2353,132 @@ interface OrderSyncResult {
   error?: string
 }
 
+// 从 WooCommerce 订单中提取物流跟踪信息
+function extractTrackingInfo(wooOrder: any): Array<{
+  carrier: string;
+  tracking_number: string;
+  tracking_url?: string;
+  date_shipped?: string;
+}> {
+  const trackingInfo: Array<{
+    carrier: string;
+    tracking_number: string;
+    tracking_url?: string;
+    date_shipped?: string;
+  }> = [];
+
+  // 方法1: 从 meta_data 中提取 (WooCommerce Shipment Tracking 插件)
+  const metaData = wooOrder.meta_data || [];
+  const trackingMeta = metaData.find((m: any) => m.key === '_wc_shipment_tracking_items');
+  
+  if (trackingMeta?.value) {
+    try {
+      // 值可能是数组或 JSON 字符串
+      const trackingItems = typeof trackingMeta.value === 'string' 
+        ? JSON.parse(trackingMeta.value) 
+        : trackingMeta.value;
+      
+      if (Array.isArray(trackingItems)) {
+        for (const item of trackingItems) {
+          trackingInfo.push({
+            carrier: item.tracking_provider || item.custom_tracking_provider || '',
+            tracking_number: item.tracking_number || '',
+            tracking_url: item.tracking_link || item.custom_tracking_link || undefined,
+            date_shipped: item.date_shipped ? new Date(item.date_shipped * 1000).toISOString() : undefined,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('解析物流跟踪信息失败:', e);
+    }
+  }
+
+  // 方法2: 从 shipment_trackings 字段提取 (某些插件直接提供)
+  if (wooOrder.shipment_trackings && Array.isArray(wooOrder.shipment_trackings)) {
+    for (const tracking of wooOrder.shipment_trackings) {
+      // 检查是否已存在相同的运单号
+      const exists = trackingInfo.some(t => t.tracking_number === tracking.tracking_number);
+      if (!exists) {
+        trackingInfo.push({
+          carrier: tracking.tracking_provider || '',
+          tracking_number: tracking.tracking_number || '',
+          tracking_url: tracking.tracking_link || undefined,
+          date_shipped: tracking.date_shipped || undefined,
+        });
+      }
+    }
+  }
+
+  return trackingInfo;
+}
+
+// 订单归属信息接口
+interface OrderAttribution {
+  source_type: string | null;
+  utm_source: string | null;
+  device_type: string | null;
+  session_pages: number | null;
+  referrer: string | null;
+}
+
+// 提取订单归属信息（WooCommerce Order Attribution）
+function extractOrderAttribution(wooOrder: any): OrderAttribution {
+  const metaData = wooOrder.meta_data || [];
+  
+  const getMeta = (key: string): string | null => {
+    const meta = metaData.find((m: any) => m.key === key);
+    return meta?.value || null;
+  };
+  
+  return {
+    source_type: getMeta('_wc_order_attribution_source_type'),
+    utm_source: getMeta('_wc_order_attribution_utm_source'),
+    device_type: getMeta('_wc_order_attribution_device_type'),
+    session_pages: getMeta('_wc_order_attribution_session_pages') 
+      ? parseInt(getMeta('_wc_order_attribution_session_pages')!) 
+      : null,
+    referrer: getMeta('_wc_order_attribution_referrer'),
+  };
+}
+
+// 提取订单来源（友好名称）- 兼容旧字段
+function extractOrderSource(wooOrder: any): string {
+  const createdVia = wooOrder.created_via || '';
+  const paymentMethod = wooOrder.payment_method || '';
+  const metaData = wooOrder.meta_data || [];
+  
+  // 优先使用 WooCommerce Order Attribution 的来源类型
+  const sourceTypeMeta = metaData.find((m: any) => m.key === '_wc_order_attribution_source_type');
+  if (sourceTypeMeta?.value) {
+    const sourceType = sourceTypeMeta.value;
+    const utmSourceMeta = metaData.find((m: any) => m.key === '_wc_order_attribution_utm_source');
+    const utmSource = utmSourceMeta?.value || '';
+    
+    // 返回更友好的名称
+    if (sourceType === 'organic' && utmSource) {
+      return `Organic (${utmSource})`;
+    }
+    if (sourceType === 'direct') return 'Direct';
+    if (sourceType === 'organic') return 'Organic';
+    if (sourceType === 'paid') return `Paid (${utmSource || 'ads'})`;
+    if (sourceType === 'referral') return `Referral`;
+    return sourceType;
+  }
+  
+  // 根据 created_via 和 payment_method 判断来源
+  if (createdVia === 'checkout') {
+    if (paymentMethod.toLowerCase().includes('paypal')) return 'PayPal';
+    if (paymentMethod.toLowerCase().includes('stripe')) return 'Stripe';
+    if (paymentMethod.toLowerCase().includes('klarna')) return 'Klarna';
+    return 'Website';
+  }
+  if (createdVia === 'admin') return 'Admin';
+  if (createdVia === 'rest-api') return 'API';
+  if (createdVia === 'import') return 'Import';
+  
+  return createdVia || 'Unknown';
+}
+
 // 转换 WooCommerce 订单数据为数据库格式
 function transformWooOrder(wooOrder: any, site: SiteKey): any {
   return {
@@ -2372,6 +2510,14 @@ function transformWooOrder(wooOrder: any, site: SiteKey): any {
       method_title: line.method_title,
       total: parseFloat(line.total) || 0,
     })),
+    tracking_info: extractTrackingInfo(wooOrder),  // 物流跟踪信息
+    order_source: extractOrderSource(wooOrder),    // 订单来源（友好名称）
+    // 订单归属详细信息
+    attribution_source_type: extractOrderAttribution(wooOrder).source_type,
+    attribution_utm_source: extractOrderAttribution(wooOrder).utm_source,
+    attribution_device_type: extractOrderAttribution(wooOrder).device_type,
+    attribution_session_pages: extractOrderAttribution(wooOrder).session_pages,
+    attribution_referrer: extractOrderAttribution(wooOrder).referrer,
     payment_method: wooOrder.payment_method || null,
     payment_method_title: wooOrder.payment_method_title || null,
     date_created: wooOrder.date_created ? new Date(wooOrder.date_created).toISOString() : new Date().toISOString(),
@@ -2810,6 +2956,53 @@ Deno.serve(async (req) => {
           })
         } catch (err) {
           console.error(`[${body.site}] 获取订单失败:`, err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'update-tracking': {
+        // 更新物流跟踪信息（手动录入）
+        try {
+          const { orderId, trackingInfo } = body
+          
+          if (!orderId) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: '缺少订单 ID'
+            }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+          }
+
+          const { error: updateError } = await supabase
+            .from('orders')
+            .update({
+              tracking_info: trackingInfo || [],
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', orderId)
+
+          if (updateError) {
+            console.error('更新物流信息失败:', updateError)
+            return new Response(JSON.stringify({
+              success: false,
+              error: updateError.message
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+          }
+
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error('更新物流信息失败:', err)
           return new Response(JSON.stringify({
             success: false,
             error: err instanceof Error ? err.message : 'Unknown error'

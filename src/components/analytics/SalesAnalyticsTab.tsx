@@ -1,7 +1,7 @@
 // 销售分析 Tab - 原有的订单数据分析内容
 
 import { useState } from 'react';
-import { ShoppingBag, Package, DollarSign, RotateCcw, Loader2, AlertCircle, ChevronDown, ChevronUp, Target } from 'lucide-react';
+import { ShoppingBag, Package, DollarSign, Loader2, AlertCircle, ChevronDown, ChevronUp, Target, TrendingUp, Wallet, Megaphone } from 'lucide-react';
 import { formatRevenue } from '@/lib/analytics';
 import type { SiteKey } from '@/lib/types';
 import { getSiteLabel } from '@/lib/orders';
@@ -10,7 +10,7 @@ import { getProductBySku, type LocalProduct } from '@/lib/products';
 import { ProductDetailModal } from '@/components/ProductDetailModal';
 import { useAnalyticsData } from '@/hooks/useAnalytics';
 import { useFbAdsSummary, useFbDailyTrendByCountry } from '@/hooks/useFacebookAds';
-// formatCurrency is imported from fb-ads but not used directly - kept for consistency
+import { useLatestExchangeRate } from '@/hooks/useCostConfig';
 import { SalesTrendChart } from './SalesTrendChart';
 
 const ALL_SITES: SiteKey[] = ['com', 'uk', 'de', 'fr'];
@@ -47,47 +47,50 @@ export function SalesAnalyticsTab() {
     dateTo,
   });
 
+  // React Query - 最新汇率
+  const { data: latestRate } = useLatestExchangeRate();
+  const usdToCny = latestRate?.usd_cny || 7.25; // 默认 7.25
+
   const error = analyticsError ? (analyticsError as Error).message : null;
 
-  // 计算销售 ROAS (销售额 / 广告花费)
-  // 注: 销售额按站点货币统一转 USD
-  const getSalesRoas = () => {
-    if (!analytics || !fbAdsSummary || fbAdsSummary.total_spend === 0) return null;
-    // 汇率简化处理 (EUR=1.05, GBP=1.27, USD=1)
-    const exchangeRates: Record<string, number> = { EUR: 1.05, GBP: 1.27, USD: 1 };
+  // 计算广告花费（支持站点筛选）
+  const getAdSpend = () => {
+    if (!fbAdsSummary) return 0;
     const siteToCountry: Record<string, string> = { de: 'DE', fr: 'FR', uk: 'GB', com: 'US' };
-    const siteToCurrency: Record<string, string> = { de: 'EUR', fr: 'EUR', uk: 'GBP', com: 'USD' };
-
-    // 如果筛选了站点，只计算对应国家的广告花费
-    let adSpend = fbAdsSummary.total_spend;
-    let revenue = analytics.revenue;
-
+    
     if (selectedSites.length > 0) {
-      // 计算选中站点对应的广告花费
-      adSpend = 0;
+      let adSpend = 0;
       for (const site of selectedSites) {
         const country = siteToCountry[site];
         if (fbAdsSummary.by_country[country]) {
           adSpend += fbAdsSummary.by_country[country].spend;
         }
       }
+      return adSpend;
     }
+    return fbAdsSummary.total_spend;
+  };
 
-    // 将销售额转为 USD (假设 analytics.revenue 按 selectedSites 已经过滤)
-    // 简化: 如果选择单个站点,用该站点货币转换; 否则假设混合货币取平均
-    let revenueInUSD = revenue;
-    if (selectedSites.length === 1) {
-      const currency = siteToCurrency[selectedSites[0]];
-      revenueInUSD = revenue * exchangeRates[currency];
-    } else if (selectedSites.length === 0) {
-      // 混合多站点,粗略按 EUR 计算 (主要是 DE)
-      revenueInUSD = revenue * exchangeRates.EUR;
-    }
+  const adSpend = getAdSpend();
 
-    if (adSpend === 0) return null;
+  // 计算净利润 = 毛利润 - 广告费
+  const getNetProfit = () => {
+    if (!analytics) return 0;
+    return analytics.grossProfit - adSpend;
+  };
+
+  // 计算净利率 = 净利润 / 净收入
+  const getNetProfitRate = () => {
+    if (!analytics || analytics.revenue === 0) return 0;
+    return (getNetProfit() / analytics.revenue) * 100;
+  };
+
+  // 计算销售 ROAS (销售额 / 广告花费)
+  const getSalesRoas = () => {
+    if (!analytics || adSpend === 0) return null;
     return {
-      roas: revenueInUSD / adSpend,
-      revenueUSD: revenueInUSD,
+      roas: analytics.revenue / adSpend,
+      revenueUSD: analytics.revenue,
       adSpend,
     };
   };
@@ -195,105 +198,251 @@ export function SalesAnalyticsTab() {
         </div>
       ) : analytics && (
         <>
-          {/* ROAS 卡片行 - 与广告分析 UI 统一 */}
-          {salesRoas && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-              {/* 销售 ROAS - 核心指标突出显示 */}
-              <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl shadow-sm p-4 sm:p-5 text-white">
-                <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                  <div className="p-2 sm:p-2.5 bg-white/20 rounded-lg flex-shrink-0">
-                    <Target className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-                  </div>
-                  <span className="text-sm sm:text-base text-white/90">销售 ROAS</span>
+          {/* ===== 核心指标大卡片 ===== */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {/* 净利润 - 最核心指标 */}
+            <div className={`col-span-2 lg:col-span-1 rounded-xl shadow-sm p-4 sm:p-5 ${
+              getNetProfit() >= 0 
+                ? 'bg-gradient-to-br from-green-500 to-green-600 text-white' 
+                : 'bg-gradient-to-br from-red-500 to-red-600 text-white'
+            }`}>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
+                  <TrendingUp className="w-5 h-5 text-white" />
                 </div>
-                <div className="text-3xl sm:text-4xl font-bold">
-                  {salesRoas.roas.toFixed(2)}x
-                </div>
-                <div className="text-xs sm:text-sm text-white/70 mt-1.5">
-                  销售额 ${Math.round(salesRoas.revenueUSD).toLocaleString()} / 花费 ${Math.round(salesRoas.adSpend).toLocaleString()}
-                </div>
+                <span className="text-sm text-white/90">净利润</span>
               </div>
-
-              {/* 销售额 (USD) */}
-              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
-                <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                  <div className="p-2 sm:p-2.5 bg-emerald-100 rounded-lg flex-shrink-0">
-                    <DollarSign className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
-                  </div>
-                  <span className="text-sm sm:text-base text-gray-500">销售额</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-bold text-gray-900">
-                  ${Math.round(salesRoas.revenueUSD).toLocaleString()}
-                </div>
-                <div className="text-xs sm:text-sm text-gray-400 mt-1.5">WooCommerce 订单</div>
+              <div className="text-3xl sm:text-4xl font-bold">
+                ${Math.round(getNetProfit()).toLocaleString()}
               </div>
-
-              {/* 广告花费 */}
-              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
-                <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                  <div className="p-2 sm:p-2.5 bg-purple-100 rounded-lg flex-shrink-0">
-                    <DollarSign className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600" />
-                  </div>
-                  <span className="text-sm sm:text-base text-gray-500">广告花费</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-bold text-gray-900">
-                  ${Math.round(salesRoas.adSpend).toLocaleString()}
-                </div>
-                <div className="text-xs sm:text-sm text-gray-400 mt-1.5">Facebook Ads</div>
+              <div className="text-lg font-semibold text-white/90 mt-1">
+                ¥{Math.round(getNetProfit() * usdToCny).toLocaleString()}
+                <span className="text-xs font-normal text-white/60 ml-1">@{usdToCny.toFixed(2)}</span>
+              </div>
+              <div className="text-xs text-white/70 mt-1">
+                毛利 ${Math.round(analytics.grossProfit).toLocaleString()} - 广告 ${Math.round(adSpend).toLocaleString()}
               </div>
             </div>
-          )}
 
-          {/* 统计卡片 */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {/* 净利率 */}
+            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-cyan-100 rounded-lg flex-shrink-0">
+                  <Target className="w-5 h-5 text-cyan-600" />
+                </div>
+                <span className="text-sm text-gray-500">净利率</span>
+              </div>
+              <div className={`text-3xl sm:text-4xl font-bold ${getNetProfitRate() >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                {getNetProfitRate().toFixed(1)}%
+              </div>
+              <div className="text-xs text-gray-400 mt-2">净利润 / 净收入</div>
+            </div>
+
+            {/* 销售 ROAS */}
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl shadow-sm p-4 sm:p-5 text-white">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
+                  <Target className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm text-white/90">ROAS</span>
+              </div>
+              <div className="text-3xl sm:text-4xl font-bold">
+                {salesRoas ? `${salesRoas.roas.toFixed(2)}x` : '-'}
+              </div>
+              <div className="text-xs text-white/70 mt-2">销售额 / 广告花费</div>
+            </div>
+
+            {/* 净收入 */}
+            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-emerald-100 rounded-lg flex-shrink-0">
+                  <DollarSign className="w-5 h-5 text-emerald-600" />
+                </div>
+                <span className="text-sm text-gray-500">净收入</span>
+              </div>
+              <div className="text-3xl sm:text-4xl font-bold text-gray-900">
+                ${Math.round(analytics.revenue).toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-400 mt-2">扣除预估退款</div>
+            </div>
+          </div>
+
+          {/* 第二行：广告、订单、件数 */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-5">
+            {/* 广告花费 */}
+            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-purple-100 rounded-lg flex-shrink-0">
+                  <Megaphone className="w-5 h-5 text-purple-600" />
+                </div>
+                <span className="text-sm text-gray-500">广告花费</span>
+              </div>
+              <div className="text-2xl sm:text-3xl font-bold text-gray-900">
+                ${Math.round(adSpend).toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">Facebook Ads</div>
+            </div>
+
+            {/* 毛利润 */}
+            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-green-100 rounded-lg flex-shrink-0">
+                  <TrendingUp className="w-5 h-5 text-green-600" />
+                </div>
+                <span className="text-sm text-gray-500">毛利润</span>
+              </div>
+              <div className={`text-2xl sm:text-3xl font-bold ${analytics.grossProfit >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                ${Math.round(analytics.grossProfit).toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">不含广告</div>
+            </div>
+
             {/* 订单数 */}
             <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
-              <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                <div className="p-2 sm:p-2.5 bg-blue-100 rounded-lg flex-shrink-0">
-                  <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-blue-100 rounded-lg flex-shrink-0">
+                  <ShoppingBag className="w-5 h-5 text-blue-600" />
                 </div>
-                <span className="text-sm sm:text-base text-gray-500">有效订单</span>
+                <span className="text-sm text-gray-500">有效订单</span>
               </div>
               <div className="text-2xl sm:text-3xl font-bold text-gray-900">{analytics.orderCount}</div>
-              <div className="text-xs sm:text-sm text-gray-400 mt-1.5">已完成 + 处理中</div>
+              <div className="text-xs text-gray-400 mt-1">已完成 + 处理中</div>
             </div>
 
             {/* 销售件数 */}
             <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
-              <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                <div className="p-2 sm:p-2.5 bg-green-100 rounded-lg flex-shrink-0">
-                  <Package className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
+                  <Package className="w-5 h-5 text-orange-600" />
                 </div>
-                <span className="text-sm sm:text-base text-gray-500">销售件数</span>
+                <span className="text-sm text-gray-500">销售件数</span>
               </div>
               <div className="text-2xl sm:text-3xl font-bold text-gray-900">{analytics.itemCount}</div>
-              <div className="text-xs sm:text-sm text-gray-400 mt-1.5">商品总数量</div>
-            </div>
-
-            {/* 原始销售额 */}
-            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
-              <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                <div className="p-2 sm:p-2.5 bg-emerald-100 rounded-lg flex-shrink-0">
-                  <DollarSign className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
-                </div>
-                <span className="text-sm sm:text-base text-gray-500">原始销售额</span>
-              </div>
-              <div className="text-2xl sm:text-3xl font-bold text-gray-900">{formatRevenue(analytics.revenue)}</div>
-              <div className="text-xs sm:text-sm text-gray-400 mt-1.5">站点原始货币</div>
-            </div>
-
-            {/* 退款额 */}
-            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
-              <div className="flex items-center gap-3 sm:gap-4 mb-3">
-                <div className="p-2 sm:p-2.5 bg-red-100 rounded-lg flex-shrink-0">
-                  <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 text-red-600" />
-                </div>
-                <span className="text-sm sm:text-base text-gray-500">退款</span>
-              </div>
-              <div className="text-2xl sm:text-3xl font-bold text-gray-900">{formatRevenue(analytics.refunds)}</div>
-              <div className="text-xs sm:text-sm text-gray-400 mt-1.5">{analytics.refundCount} 笔退款</div>
+              <div className="text-xs text-gray-400 mt-1">商品总数量</div>
             </div>
           </div>
+
+          {/* ===== 明细区域 ===== */}
+          {analytics && (
+            <>
+              {/* 收入与成本明细 - 合并为一个卡片 */}
+              <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+                <h3 className="text-base font-medium text-gray-700 mb-4 flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-gray-600" />
+                  收入与成本明细
+                  <span className="text-xs font-normal text-gray-400 ml-auto">比例基于净收入 ${Math.round(analytics.revenue).toLocaleString()}</span>
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                  {/* 毛收入 */}
+                  <div className="bg-emerald-50 rounded-lg p-3">
+                    <div className="text-xs text-emerald-600 mb-1">毛收入</div>
+                    <div className="text-lg font-bold text-gray-900">
+                      ${Math.round(analytics.grossRevenue || analytics.revenue + analytics.refunds).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* 预估退款 */}
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-red-600">预估退款</span>
+                      <span className="text-xs text-red-500">{analytics.refundRate || 8}%</span>
+                    </div>
+                    <div className="text-lg font-bold text-red-600">
+                      -${Math.round(analytics.refunds).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* 采购成本 */}
+                  <div className="bg-orange-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-orange-600">采购成本</span>
+                      <span className="text-xs text-orange-500">
+                        {analytics.revenue ? ((analytics.productCost / analytics.revenue) * 100).toFixed(0) : 0}%
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                      ${Math.round(analytics.productCost || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* 物流成本 */}
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-blue-600">物流成本</span>
+                      <span className="text-xs text-blue-500">
+                        {analytics.revenue ? ((analytics.shippingCost / analytics.revenue) * 100).toFixed(0) : 0}%
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                      ${Math.round(analytics.shippingCost || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* 平台手续费 */}
+                  <div className="bg-purple-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-purple-600">平台手续费</span>
+                      <span className="text-xs text-purple-500">
+                        {analytics.revenue ? ((analytics.platformFee / analytics.revenue) * 100).toFixed(0) : 0}%
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                      ${Math.round(analytics.platformFee || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* 广告花费 */}
+                  <div className="bg-pink-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-pink-600">广告花费</span>
+                      <span className="text-xs text-pink-500">
+                        {analytics.revenue ? ((adSpend / analytics.revenue) * 100).toFixed(0) : 0}%
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                      ${Math.round(adSpend).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* 总成本 */}
+                  <div className="bg-amber-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-amber-600">总成本</span>
+                      <span className="text-xs text-amber-500">
+                        {analytics.revenue ? (((analytics.totalCost + adSpend) / analytics.revenue) * 100).toFixed(0) : 0}%
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                      ${Math.round(analytics.totalCost + adSpend).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* 各站点原始货币明细 */}
+          {analytics.siteRevenues && analytics.siteRevenues.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border p-4 sm:p-5">
+              <h3 className="text-base font-medium text-gray-700 mb-3">各站点原始货币销售额</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {analytics.siteRevenues.map(sr => (
+                  <div key={sr.site} className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600">{getSiteLabel(sr.site)}</span>
+                      <span className="text-xs text-gray-400">{sr.currency}</span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                      {formatRevenue(sr.revenue, sr.currency)}
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                      <span>{sr.orderCount} 单</span>
+                      <span>{sr.itemCount} 件</span>
+                    </div>
+                    {sr.refunds > 0 && (
+                      <div className="text-xs text-red-500 mt-1">
+                        退款: {formatRevenue(sr.refunds, sr.currency)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* 每日销售趋势 - 销售额 + 销售 ROAS */}
           {analytics.dailyStats.length > 1 && (
@@ -318,13 +467,17 @@ export function SalesAnalyticsTab() {
             ) : (
               <>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[700px]">
+                  <table className="w-full min-w-[1200px]">
                     <thead className="bg-gray-50 border-b border-gray-100">
                       <tr>
                         <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">排名</th>
                         <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">商品</th>
                         <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">销量</th>
                         <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">收入</th>
+                        <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">采购</th>
+                        <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">物流</th>
+                        <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">手续费</th>
+                        <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">利润</th>
                         <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">退款</th>
                         <th className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">订单数</th>
                       </tr>
@@ -371,6 +524,20 @@ export function SalesAnalyticsTab() {
                           </td>
                           <td className="px-4 sm:px-5 py-3 sm:py-4 text-right font-medium text-sm sm:text-base text-emerald-600">
                             {formatRevenue(product.revenue)}
+                          </td>
+                          <td className="px-4 sm:px-5 py-3 sm:py-4 text-right text-sm sm:text-base text-orange-600">
+                            {formatRevenue(product.productCost || 0)}
+                          </td>
+                          <td className="px-4 sm:px-5 py-3 sm:py-4 text-right text-sm sm:text-base text-blue-600">
+                            {formatRevenue(product.shippingCost || 0)}
+                          </td>
+                          <td className="px-4 sm:px-5 py-3 sm:py-4 text-right text-sm sm:text-base text-purple-600">
+                            {formatRevenue(product.platformFee || 0)}
+                          </td>
+                          <td className={`px-4 sm:px-5 py-3 sm:py-4 text-right font-medium text-sm sm:text-base ${
+                            product.profit >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {formatRevenue(product.profit)}
                           </td>
                           <td className="px-4 sm:px-5 py-3 sm:py-4 text-right text-xs sm:text-sm">
                             {product.refundQuantity > 0 ? (
