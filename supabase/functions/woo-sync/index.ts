@@ -200,7 +200,15 @@ interface SyncVideoRequest {
   videoUrl: string | null  // null 表示清除视频
 }
 
-type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | ListWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | UpdateTrackingRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest | SyncVideoRequest
+// 更新商品状态请求（发布/未发布）
+interface UpdateProductStatusRequest {
+  action: 'update-status'
+  sku: string
+  sites: SiteKey[]
+  status: 'publish' | 'draft' | 'pending' | 'private'
+}
+
+type RequestBody = SyncProductRequest | SyncProductsBatchRequest | CleanupImagesRequest | PublishProductRequest | RegisterWebhooksRequest | ListWebhooksRequest | GetProductRequest | DeleteProductRequest | PullProductsRequest | SyncOrdersRequest | UpdateOrderStatusRequest | AddOrderNoteRequest | GetOrderRequest | UpdateTrackingRequest | GetVariationsRequest | SyncVariationsRequest | RebuildVariationsRequest | SyncVideoRequest | UpdateProductStatusRequest
 
 interface SyncResult {
   site: SiteKey
@@ -3113,6 +3121,85 @@ Deno.serve(async (req) => {
           })
         } catch (err) {
           console.error('重建变体失败:', err)
+          return new Response(JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+
+      case 'update-status': {
+        // 更新商品发布状态（发布/草稿）
+        try {
+          const { sku, sites, status } = body as UpdateProductStatusRequest
+          console.log(`📝 更新商品状态: ${sku} -> ${status} (${sites.join(', ')})`)
+
+          // 获取商品数据（需要 woo_ids）
+          const { data: product, error: fetchError } = await supabase
+            .from('products')
+            .select('woo_ids, statuses')
+            .eq('sku', sku)
+            .single()
+
+          if (fetchError || !product) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: '商品不存在',
+              results: sites.map(site => ({ site, success: false, error: '商品不存在' }))
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+          }
+
+          // 并行更新各站点
+          const results = await Promise.all(
+            sites.map(async (site): Promise<{ site: SiteKey; success: boolean; error?: string }> => {
+              const wooId = product.woo_ids?.[site]
+              if (!wooId) {
+                return { site, success: false, error: '该站点未发布此商品' }
+              }
+
+              try {
+                const client = new WooCommerceClient(site)
+                await client.updateProduct(wooId, { status })
+                console.log(`✅ [${site}] 状态已更新为 ${status}`)
+                return { site, success: true }
+              } catch (err) {
+                const errorMsg = err instanceof Error ? err.message : '更新失败'
+                console.error(`❌ [${site}] 状态更新失败: ${errorMsg}`)
+                return { site, success: false, error: errorMsg }
+              }
+            })
+          )
+
+          // 更新本地数据库的 statuses 字段
+          const successSites = results.filter(r => r.success).map(r => r.site)
+          if (successSites.length > 0) {
+            const newStatuses = { ...(product.statuses || {}) }
+            for (const site of successSites) {
+              newStatuses[site] = status
+            }
+
+            const { error: updateError } = await supabase
+              .from('products')
+              .update({
+                statuses: newStatuses,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('sku', sku)
+
+            if (updateError) {
+              console.warn('更新本地状态失败:', updateError)
+            }
+          }
+
+          return new Response(JSON.stringify({ success: true, results }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (err) {
+          console.error('更新商品状态失败:', err)
           return new Response(JSON.stringify({
             success: false,
             error: err instanceof Error ? err.message : 'Unknown error'

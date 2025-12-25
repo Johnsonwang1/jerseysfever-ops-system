@@ -77,6 +77,10 @@ export interface LocalProduct {
   // 成本（人民币）
   cost?: number | null;
 
+  // 销量和订单统计
+  total_sales?: number | null;  // 历史销量
+  last_order_date?: string | null;  // 最近下单时间
+
   // 时间戳
   created_at: string;
   updated_at: string;

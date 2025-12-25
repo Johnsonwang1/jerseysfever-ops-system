@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Package, Loader2, AlertCircle, Globe, ChevronDown, Plus, Wifi, Tag, X, Trash2, Upload, Download } from 'lucide-react';
+import { Package, Loader2, AlertCircle, Globe, ChevronDown, Plus, Wifi, Tag, X, Trash2, Upload, Download, EyeOff } from 'lucide-react';
 import { type LocalProduct } from '../lib/products';
 import { supabase } from '../lib/supabase';
 import { SITES } from '../lib/attributes';
@@ -11,7 +11,7 @@ import { startSync, endSync } from '../components/SyncToast';
 import { BatchCategoryModal } from '../components/products/BatchCategoryModal';
 import { UploadModal } from '../components/UploadModal';
 import { syncAllFromAllSites, syncAllFromSite, subscribeSyncProgress, getSyncProgress, type SyncProgressCallback, type SyncProgress } from '../lib/sync-service';
-import { deleteProductFromSites, syncProductToSites, pullProductsFromSite, syncAllVariations, type DeleteResult, type SyncResult, type SyncField, type SyncOptions } from '../lib/sync-api';
+import { deleteProductFromSites, syncProductToSites, pullProductsFromSite, syncAllVariations, unpublishProduct, type DeleteResult, type SyncResult, type SyncField, type SyncOptions } from '../lib/sync-api';
 import { useAuth } from '../lib/auth';
 import { 
   useProducts,
@@ -33,7 +33,7 @@ export function ProductsPage() {
   // 从 URL 读取初始筛选状态
   const getInitialFilters = (): SpecialFilter[] => {
     const filter = searchParams.get('filter');
-    const validFilters: SpecialFilter[] = ['ai_pending', 'unsync', 'draft', 'var_zero', 'var_one', 'var_sku_mismatch'];
+    const validFilters: SpecialFilter[] = ['ai_pending', 'unsync', 'sync_error', 'draft', 'published', 'var_zero', 'var_one', 'var_sku_mismatch'];
     if (filter) {
       return filter.split(',').filter((f): f is SpecialFilter => validFilters.includes(f as SpecialFilter));
     }
@@ -166,9 +166,12 @@ export function ProductsPage() {
   const [syncingSku, setSyncingSku] = useState<string | null>(null);
 
   // 批量操作弹窗状态
-  const [batchAction, setBatchAction] = useState<'sync' | 'delete' | 'update' | 'pull' | null>(null);
+  const [batchAction, setBatchAction] = useState<'sync' | 'delete' | 'update' | 'pull' | 'unpublish' | null>(null);
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [batchResults, setBatchResults] = useState<{ sku: string; success: boolean; error?: string }[] | undefined>(undefined);
+
+  // 单个商品未发布状态
+  const [unpublishingSku, setUnpublishingSku] = useState<string | null>(null);
 
   // GCP 全量同步进度状态
   const [gcpSyncProgress, setGcpSyncProgress] = useState<SyncProgress | null>(null);
@@ -632,6 +635,88 @@ export function ProductsPage() {
     }
   };
 
+  // 批量设为未发布（草稿）
+  const handleBatchUnpublish = async (sites: SiteKey[]) => {
+    const selectedProducts = products.filter(p => selectedSkus.has(p.sku));
+
+    setIsBatchProcessing(true);
+    try {
+      const results: { sku: string; success: boolean; error?: string }[] = [];
+
+      // 逐个设为未发布
+      for (const product of selectedProducts) {
+        try {
+          const unpublishResults = await unpublishProduct(product.sku, sites);
+          const allSuccess = unpublishResults.every(r => r.success);
+          results.push({
+            sku: product.sku,
+            success: allSuccess,
+            error: unpublishResults.find(r => !r.success)?.error,
+          });
+        } catch (err) {
+          results.push({
+            sku: product.sku,
+            success: false,
+            error: err instanceof Error ? err.message : '操作失败',
+          });
+        }
+      }
+
+      setBatchResults(results);
+
+      // 刷新列表
+      await loadProducts();
+      await loadStats();
+    } catch (err) {
+      alert('批量未发布失败: ' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  // 单个商品设为未发布
+  const handleUnpublishProduct = async (sku: string) => {
+    const product = products.find(p => p.sku === sku);
+    if (!product) return;
+
+    // 获取已发布的站点
+    const publishedSites = (Object.entries(product.woo_ids || {}) as [SiteKey, number | undefined][])
+      .filter(([, id]) => id)
+      .map(([site]) => site);
+
+    if (publishedSites.length === 0) {
+      alert('该商品未发布到任何站点');
+      return;
+    }
+
+    if (!confirm(`确定要将商品 ${sku} 设为未发布（草稿）吗？\n\n将影响站点: ${publishedSites.join(', ')}`)) {
+      return;
+    }
+
+    setUnpublishingSku(sku);
+    const toastId = startSync(`正在设置 ${sku} 为未发布...`);
+
+    try {
+      const results = await unpublishProduct(sku, publishedSites);
+      const allSuccess = results.every(r => r.success);
+      
+      if (allSuccess) {
+        endSync(toastId, true, `${sku} 已设为未发布`);
+      } else {
+        const failedSites = results.filter(r => !r.success).map(r => r.site).join(', ');
+        endSync(toastId, false, `部分站点失败: ${failedSites}`);
+      }
+
+      // 刷新列表
+      await loadProducts();
+      await loadStats();
+    } catch (err) {
+      endSync(toastId, false, '操作失败: ' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setUnpublishingSku(null);
+    }
+  };
+
   // 关闭批量操作弹窗
   const handleCloseBatchModal = () => {
     setBatchAction(null);
@@ -669,6 +754,12 @@ export function ProductsPage() {
             await syncProductToSites(sku, sites, options);
           }
           endSync(true, `${skus.length} 个商品更新完成`);
+        } else if (action === 'unpublish') {
+          // 批量未发布
+          for (const sku of skus) {
+            await unpublishProduct(sku, sites);
+          }
+          endSync(true, `${skus.length} 个商品已设为未发布`);
         }
         // 刷新列表
         await loadProducts();
@@ -965,6 +1056,17 @@ export function ProductsPage() {
                 </button>
                 <button
                   onClick={() => {
+                    setBatchAction('unpublish');
+                    setBatchResults(undefined);
+                  }}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-2 text-sm bg-yellow-600 text-white hover:bg-yellow-700 rounded-lg transition-colors"
+                >
+                  <EyeOff className="w-4 h-4" />
+                  <span className="hidden sm:inline">批量未发布</span>
+                  <span className="sm:hidden">未发布</span>
+                </button>
+                <button
+                  onClick={() => {
                     setBatchAction('delete');
                     setBatchResults(undefined);
                   }}
@@ -1006,8 +1108,10 @@ export function ProductsPage() {
         onSelect={setSelectedProduct}
         onDelete={handleDeleteProduct}
         onSync={handleSyncProduct}
+        onUnpublish={handleUnpublishProduct}
         deletingSku={deletingSku}
         syncingSku={syncingSku}
+        unpublishingSku={unpublishingSku}
         hasFilters={hasFilters}
         onUpload={() => setShowUploadModal(true)}
         selectedSkus={selectedSkus}
@@ -1081,7 +1185,12 @@ export function ProductsPage() {
           action={batchAction}
           products={products.filter(p => selectedSkus.has(p.sku))}
           onClose={handleCloseBatchModal}
-          onConfirm={batchAction === 'delete' ? handleBatchDelete : batchAction === 'pull' ? handleBatchPull : handleBatchSync}
+          onConfirm={
+            batchAction === 'delete' ? handleBatchDelete : 
+            batchAction === 'pull' ? handleBatchPull : 
+            batchAction === 'unpublish' ? handleBatchUnpublish : 
+            handleBatchSync
+          }
           onConfirmAsync={batchAction !== 'delete' ? handleBatchAsync : undefined}
           isProcessing={isBatchProcessing}
           results={batchResults}

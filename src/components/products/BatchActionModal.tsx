@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { X, RefreshCw, Trash2, Loader2, CheckCircle, XCircle, AlertTriangle, Upload, Download, ExternalLink } from 'lucide-react';
+import { X, RefreshCw, Trash2, Loader2, CheckCircle, XCircle, AlertTriangle, Upload, Download, ExternalLink, EyeOff } from 'lucide-react';
 import { SITES } from '../../lib/attributes';
 import type { SiteKey } from '../../lib/types';
 import type { LocalProduct } from '../../lib/products';
 import type { SyncField } from '../../lib/sync-api';
 
-type ActionType = 'sync' | 'delete' | 'update' | 'pull';
+type ActionType = 'sync' | 'delete' | 'update' | 'pull' | 'unpublish';
 export type PullMode = 'all' | 'variations';
 
 interface BatchResult {
@@ -54,6 +54,7 @@ export function BatchActionModal({
   const isUpdate = action === 'update';
   const isDelete = action === 'delete';
   const isPull = action === 'pull';
+  const isUnpublish = action === 'unpublish';
 
   // 收集所有已发布的站点
   const allPublishedSites = new Set<SiteKey>();
@@ -66,7 +67,7 @@ export function BatchActionModal({
   });
 
   // 同步和删除都支持多选
-  // update 模式默认选择所有站点，sync/delete/pull 模式只选择已发布站点
+  // update 模式默认选择所有站点，sync/delete/pull/unpublish 模式只选择已发布站点
   // pull 模式默认选择 com 站点
   const [selectedSites, setSelectedSites] = useState<Set<SiteKey>>(
     isUpdate ? new Set(SITES.map(s => s.key)) : 
@@ -105,7 +106,7 @@ export function BatchActionModal({
   };
 
   const handleConfirm = () => {
-    if ((action === 'sync' || action === 'update' || action === 'pull') && selectedSites.size === 0) return;
+    if ((action === 'sync' || action === 'update' || action === 'pull' || action === 'unpublish') && selectedSites.size === 0) return;
     if (action === 'update' && selectedFields.size === 0) return;
     if (action === 'delete' && selectedSites.size === 0 && !deleteLocal) return;
     onConfirm(
@@ -118,7 +119,7 @@ export function BatchActionModal({
 
   // 异步执行（关闭窗口后台执行）
   const handleConfirmAsync = () => {
-    if ((action === 'sync' || action === 'update' || action === 'pull') && selectedSites.size === 0) return;
+    if ((action === 'sync' || action === 'update' || action === 'pull' || action === 'unpublish') && selectedSites.size === 0) return;
     if (action === 'update' && selectedFields.size === 0) return;
     if (action === 'delete' && selectedSites.size === 0 && !deleteLocal) return;
     if (onConfirmAsync) {
@@ -136,12 +137,12 @@ export function BatchActionModal({
   const successCount = hasResults ? results.filter(r => r.success).length : 0;
   const allSuccess = hasResults && successCount === results.length;
 
-  const title = isPull ? '从站点拉取数据' : isUpdate ? '批量更新到站点' : isSync ? '批量同步商品' : '批量删除商品';
-  const icon = isPull ? <Download className="w-5 h-5" /> : isUpdate ? <Upload className="w-5 h-5" /> : isSync ? <RefreshCw className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />;
-  const iconColor = isPull ? 'text-blue-600' : isUpdate ? 'text-green-600' : isSync ? 'text-blue-600' : 'text-red-600';
-  const buttonColor = isPull ? 'bg-blue-600 hover:bg-blue-700' : isUpdate ? 'bg-green-600 hover:bg-green-700' : isSync ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700';
-  const selectedColor = isPull ? 'border-blue-300 bg-blue-50' : isUpdate ? 'border-green-300 bg-green-50' : isSync ? 'border-blue-300 bg-blue-50' : 'border-red-300 bg-red-50';
-  const checkColor = isPull ? 'text-blue-500' : isUpdate ? 'text-green-500' : isSync ? 'text-blue-500' : 'text-red-500';
+  const title = isPull ? '从站点拉取数据' : isUpdate ? '批量更新到站点' : isSync ? '批量同步商品' : isUnpublish ? '批量设为未发布' : '批量删除商品';
+  const icon = isPull ? <Download className="w-5 h-5" /> : isUpdate ? <Upload className="w-5 h-5" /> : isSync ? <RefreshCw className="w-5 h-5" /> : isUnpublish ? <EyeOff className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />;
+  const iconColor = isPull ? 'text-blue-600' : isUpdate ? 'text-green-600' : isSync ? 'text-blue-600' : isUnpublish ? 'text-yellow-600' : 'text-red-600';
+  const buttonColor = isPull ? 'bg-blue-600 hover:bg-blue-700' : isUpdate ? 'bg-green-600 hover:bg-green-700' : isSync ? 'bg-blue-600 hover:bg-blue-700' : isUnpublish ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-red-600 hover:bg-red-700';
+  const selectedColor = isPull ? 'border-blue-300 bg-blue-50' : isUpdate ? 'border-green-300 bg-green-50' : isSync ? 'border-blue-300 bg-blue-50' : isUnpublish ? 'border-yellow-300 bg-yellow-50' : 'border-red-300 bg-red-50';
+  const checkColor = isPull ? 'text-blue-500' : isUpdate ? 'text-green-500' : isSync ? 'text-blue-500' : isUnpublish ? 'text-yellow-500' : 'text-red-500';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -322,13 +323,15 @@ export function BatchActionModal({
                 isPull ? 'bg-blue-50 border border-blue-200'
                   : isUpdate ? 'bg-green-50 border border-green-200' 
                   : isSync ? 'bg-blue-50 border border-blue-200' 
-                  : 'bg-yellow-50 border border-yellow-200'
+                  : isUnpublish ? 'bg-yellow-50 border border-yellow-200'
+                  : 'bg-red-50 border border-red-200'
               }`}>
                 <p className={`text-sm ${
                   isPull ? 'text-blue-800'
                     : isUpdate ? 'text-green-800' 
                     : isSync ? 'text-blue-800' 
-                    : 'text-yellow-800'
+                    : isUnpublish ? 'text-yellow-800'
+                    : 'text-red-800'
                 }`}>
                   {isPull ? (
                     pullMode === 'variations' ? (
@@ -340,6 +343,8 @@ export function BatchActionModal({
                     <>将 PIM 中的商品数据推送到选中的站点。未发布的站点将创建新商品，已发布的站点将更新现有商品。</>
                   ) : isSync ? (
                     <>将 PIM 中的商品数据推送到选中的站点，包括：名称、描述、价格、库存、图片等。</>
+                  ) : isUnpublish ? (
+                    <>将选中的商品在指定站点设为"草稿"状态，商品将不会在前台显示，但数据仍会保留。</>
                   ) : (
                     <><strong>警告：</strong>此操作不可撤销！商品将从选中的站点永久删除。</>
                   )}
@@ -411,7 +416,7 @@ export function BatchActionModal({
                 onClick={handleConfirm}
                 disabled={
                   isProcessing || 
-                  ((isSync || isUpdate || isPull) && selectedSites.size === 0) || 
+                  ((isSync || isUpdate || isPull || isUnpublish) && selectedSites.size === 0) || 
                   (isUpdate && selectedFields.size === 0) ||
                   (isDelete && selectedSites.size === 0 && !deleteLocal)
                 }
@@ -436,6 +441,11 @@ export function BatchActionModal({
                   <>
                     <RefreshCw className="w-4 h-4" />
                     开始同步
+                  </>
+                ) : isUnpublish ? (
+                  <>
+                    <EyeOff className="w-4 h-4" />
+                    设为未发布
                   </>
                 ) : (
                   <>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Package, Eye, ExternalLink, Trash2, Loader2, ChevronLeft, ChevronRight, CheckSquare, Square, MinusSquare, RefreshCw, Layers, X } from 'lucide-react';
+import { Package, Eye, ExternalLink, Trash2, Loader2, ChevronLeft, ChevronRight, CheckSquare, Square, MinusSquare, RefreshCw, Layers, X, ShoppingCart, Clock, EyeOff } from 'lucide-react';
 import { getMainSitePrice, getMainSiteStatus, type LocalProduct } from '../../lib/products';
 import type { SiteKey } from '../../lib/types';
 import { getProductVariations, type ProductVariation } from '../../lib/sync-api';
@@ -23,8 +23,10 @@ interface ProductTableProps {
   onSelect: (product: LocalProduct) => void;
   onDelete: (sku: string) => void;
   onSync: (sku: string) => void;
+  onUnpublish?: (sku: string) => void;  // 未发布操作
   deletingSku: string | null;
   syncingSku: string | null;
+  unpublishingSku?: string | null;  // 正在执行未发布操作的 SKU
   hasFilters: boolean;
   onUpload: () => void;
   // 批量选择
@@ -134,8 +136,10 @@ export function ProductTable({
   onSelect,
   onDelete,
   onSync,
+  onUnpublish,
   deletingSku,
   syncingSku,
+  unpublishingSku,
   hasFilters,
   onUpload,
   selectedSkus,
@@ -329,6 +333,8 @@ export function ProductTable({
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">袖长</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">性别</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">变体</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">销量</th>
+              <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">最近下单</th>
               <th className="px-4 sm:px-5 py-3 sm:py-4 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">操作</th>
             </tr>
           </thead>
@@ -536,6 +542,35 @@ export function ProductTable({
                   })()}
                 </td>
 
+                {/* 销量 */}
+                <td className="px-4 sm:px-5 py-3 sm:py-4">
+                  {product.total_sales != null && product.total_sales > 0 ? (
+                    <div className="flex items-center gap-1.5">
+                      <ShoppingCart className="w-3.5 h-3.5 text-green-500" />
+                      <span className="text-sm font-medium text-green-600">{product.total_sales}</span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400">0</span>
+                  )}
+                </td>
+
+                {/* 最近下单 */}
+                <td className="px-4 sm:px-5 py-3 sm:py-4">
+                  {product.last_order_date ? (
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-blue-500" />
+                      <span className="text-xs text-gray-600">
+                        {new Date(product.last_order_date).toLocaleDateString('zh-CN', {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400">-</span>
+                  )}
+                </td>
+
                 {/* 操作 */}
                 <td className="px-4 sm:px-5 py-3 sm:py-4">
                   <div className="flex items-center gap-1.5 sm:gap-2" onClick={(e) => e.stopPropagation()}>
@@ -570,6 +605,20 @@ export function ProductTable({
                             <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
                           )}
                         </button>
+                        {onUnpublish && (
+                          <button
+                            onClick={() => onUnpublish(product.sku)}
+                            disabled={unpublishingSku === product.sku}
+                            className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded disabled:opacity-50 transition-colors"
+                            title="设为未发布（草稿）"
+                          >
+                            {unpublishingSku === product.sku ? (
+                              <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                            ) : (
+                              <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
+                            )}
+                          </button>
+                        )}
                       </>
                     )}
 

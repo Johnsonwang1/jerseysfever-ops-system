@@ -306,11 +306,21 @@ export function MediaGallery({
   };
 
   // 拖拽上传处理
+  // 检测是否为外部文件拖入（而非内部图片拖拽排序）
+  const isExternalFileDrag = (e: React.DragEvent) => {
+    // 检查 dataTransfer.types 是否包含 'Files'（外部文件拖入）
+    // 内部拖拽排序不会有 Files 类型
+    return e.dataTransfer.types.includes('Files');
+  };
+
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!editable) return;
-    setIsDragOver(true);
+    // 只有外部文件拖入时才显示上传遮罩
+    if (isExternalFileDrag(e)) {
+      setIsDragOver(true);
+    }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
@@ -325,6 +335,10 @@ export function MediaGallery({
   const handleDragOverDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // 只有外部文件拖入时才阻止默认行为
+    if (!isExternalFileDrag(e)) {
+      return;
+    }
   };
 
   const handleDrop = async (e: React.DragEvent) => {
@@ -333,6 +347,9 @@ export function MediaGallery({
     setIsDragOver(false);
     
     if (!editable) return;
+    
+    // 只处理外部文件拖入，忽略内部图片拖拽排序
+    if (!isExternalFileDrag(e)) return;
 
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;

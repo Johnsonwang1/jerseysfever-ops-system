@@ -15,7 +15,7 @@ import { supabase, getCategoriesFromDb } from '../lib/supabase';
 import type { SiteKey, WooCategory } from '../lib/types';
 
 // 特殊筛选类型
-export type SpecialFilter = 'ai_pending' | 'unsync' | 'sync_error' | 'draft' | 'var_zero' | 'var_one' | 'var_sku_mismatch';
+export type SpecialFilter = 'ai_pending' | 'unsync' | 'sync_error' | 'draft' | 'published' | 'var_zero' | 'var_one' | 'var_sku_mismatch';
 
 // ==================== Query Hooks ====================
 
@@ -92,11 +92,20 @@ export function useProducts(params: ProductQueryParams & {
           });
         }
 
-        // 草稿
+        // 草稿（未发布到任何站点，或所有站点都是 draft 状态）
         if (clientFilters.includes('draft')) {
           filtered = filtered.filter(p => {
-            const wooIds = p.woo_ids || {};
-            return Object.keys(wooIds).length === 0 || Object.values(wooIds).every(id => !id);
+            const statuses = p.statuses || {};
+            const hasPublished = Object.values(statuses).some(s => s === 'publish');
+            return !hasPublished;
+          });
+        }
+
+        // 已发布（至少一个站点是 publish 状态）
+        if (clientFilters.includes('published')) {
+          filtered = filtered.filter(p => {
+            const statuses = p.statuses || {};
+            return Object.values(statuses).some(s => s === 'publish');
           });
         }
 

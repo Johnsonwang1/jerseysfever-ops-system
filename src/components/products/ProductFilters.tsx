@@ -1,4 +1,4 @@
-import { Search, X, Filter, ChevronDown, Check, Sparkles, CloudOff, Clock, AlertTriangle, Box, Link2Off, XCircle } from 'lucide-react';
+import { Search, X, Filter, ChevronDown, Check, Sparkles, CloudOff, Clock, AlertTriangle, Box, Link2Off, XCircle, Eye } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { CategorySelector } from './CategorySelector';
 import type { SpecialFilter } from '../../hooks/useProducts';
@@ -40,7 +40,9 @@ const SPECIAL_FILTER_OPTIONS: { id: SpecialFilter; label: string; icon: React.El
   { id: 'ai_pending', label: 'AI图待替换', icon: Sparkles, color: 'text-purple-600 bg-purple-50' },
   { id: 'unsync', label: '未同步', icon: CloudOff, color: 'text-amber-600 bg-amber-50' },
   { id: 'sync_error', label: '同步失败', icon: XCircle, color: 'text-red-600 bg-red-50' },
-  { id: 'draft', label: '草稿', icon: Clock, color: 'text-gray-600 bg-gray-100' },
+  // 发布状态筛选
+  { id: 'published', label: '已发布', icon: Eye, color: 'text-green-600 bg-green-50', group: 'status' },
+  { id: 'draft', label: '草稿', icon: Clock, color: 'text-gray-600 bg-gray-100', group: 'status' },
   // 变体问题筛选
   { id: 'var_zero', label: '无变体', icon: Box, color: 'text-red-600 bg-red-50', group: 'variation' },
   { id: 'var_one', label: '仅1个变体', icon: AlertTriangle, color: 'text-orange-600 bg-orange-50', group: 'variation' },
@@ -323,6 +325,27 @@ export function ProductFilters({
                     );
                   })}
                   
+                  {/* 发布状态筛选 */}
+                  <div className="border-t border-gray-100 mt-1 pt-1">
+                    <div className="px-3 py-1.5 text-xs text-gray-400 font-medium">发布状态</div>
+                    {SPECIAL_FILTER_OPTIONS.filter(o => o.group === 'status').map((option) => {
+                      const isSelected = specialFilters.includes(option.id);
+                      return (
+                        <button
+                          key={option.id}
+                          onClick={() => toggleSpecialFilter(option.id)}
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
+                            isSelected ? option.color : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          <option.icon className="w-4 h-4" />
+                          <span className="flex-1 text-left">{option.label}</span>
+                          {isSelected && <Check className="w-4 h-4" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {/* 变体问题筛选 */}
                   <div className="border-t border-gray-100 mt-1 pt-1">
                     <div className="px-3 py-1.5 text-xs text-gray-400 font-medium">变体问题</div>

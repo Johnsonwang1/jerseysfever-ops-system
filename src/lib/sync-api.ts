@@ -11,6 +11,9 @@ import type { SiteKey } from './types';
 // 可选择同步的字段
 export type SyncField = 'name' | 'description' | 'categories' | 'prices' | 'stock' | 'status' | 'images';
 
+// 商品状态类型
+export type ProductStatus = 'publish' | 'draft' | 'pending' | 'private';
+
 export interface SyncOptions {
   fields?: SyncField[];  // 指定要同步的字段，不传则同步所有（除 images）
   syncImages?: boolean;  // 兼容旧参数
@@ -526,6 +529,66 @@ export interface PullResult {
   sku: string;
   success: boolean;
   error?: string;
+}
+
+// ==================== 修改商品状态（发布/未发布） ====================
+
+export interface UpdateStatusResult {
+  site: SiteKey;
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * 修改商品的发布状态
+ * @param sku 商品 SKU
+ * @param sites 要修改的站点列表
+ * @param status 目标状态（publish/draft）
+ */
+export async function updateProductStatus(
+  sku: string,
+  sites: SiteKey[],
+  status: ProductStatus
+): Promise<UpdateStatusResult[]> {
+  console.log(`📝 修改商品 ${sku} 状态为 ${status} (${sites.join(', ')})`);
+
+  const { data, error } = await supabase.functions.invoke('woo-sync', {
+    body: {
+      action: 'update-status',
+      sku,
+      sites,
+      status,
+    },
+  });
+
+  if (error) {
+    console.error('Edge Function 调用失败:', error);
+    return sites.map(site => ({
+      site,
+      success: false,
+      error: error.message || 'Edge Function 调用失败',
+    }));
+  }
+
+  if (!data?.success) {
+    return sites.map(site => ({
+      site,
+      success: false,
+      error: data?.error || '状态更新失败',
+    }));
+  }
+
+  return data.results as UpdateStatusResult[];
+}
+
+/**
+ * 设置商品为未发布（草稿）状态
+ */
+export async function unpublishProduct(
+  sku: string,
+  sites: SiteKey[]
+): Promise<UpdateStatusResult[]> {
+  return updateProductStatus(sku, sites, 'draft');
 }
 
 // ==================== 获取商品变体 ====================
