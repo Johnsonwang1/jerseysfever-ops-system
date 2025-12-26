@@ -11,14 +11,21 @@ import type {
   GeneratedImage,
 } from './types';
 
-// 构建 AI Prompt（支持多商品）
+// 构建 AI Prompt（支持多商品 + 模板模式）
 export function buildPrompt(
   userInput: string,
   products: AdProductContext[],
   context: AIContext,
-  conversationHistory?: string[]
+  conversationHistory?: string[],
+  isTemplateMode?: boolean
 ): string {
   let prompt = '';
+
+  // 模板模式：添加预设指令
+  if (isTemplateMode) {
+    prompt += 'IMPORTANT: Generate an advertisement image with similar style, layout, visual elements and design approach as the FIRST reference image provided. ';
+    prompt += 'Apply the same aesthetic to the new product while maintaining the overall composition and feel.\n\n';
+  }
 
   // 添加对话历史作为上下文（记忆功能）
   if (conversationHistory && conversationHistory.length > 0) {
@@ -27,7 +34,10 @@ export function buildPrompt(
     prompt += '\n\n';
   }
 
-  prompt += `Create an advertisement image.\n\nUser request: ${userInput}\n\n`;
+  // 用户输入为空时（模板模式直接点发送），使用默认指令
+  const effectiveUserInput = userInput.trim() || (isTemplateMode ? 'Generate a similar style advertisement for this product' : 'Create a professional advertisement');
+  
+  prompt += `Create an advertisement image.\n\nUser request: ${effectiveUserInput}\n\n`;
 
   if (products.length > 0) {
     if (products.length === 1) {
@@ -81,7 +91,7 @@ export function buildPrompt(
   return prompt;
 }
 
-// 获取图片上下文（支持多商品）
+// 获取图片上下文（支持多商品 + 多图选择）
 export function getImageContext(
   products: AdProductContext[],
   context: AIContext
@@ -90,11 +100,17 @@ export function getImageContext(
     return [];
   }
 
-  // 收集所有商品的主图
   const images: string[] = [];
+  const selectedIndices = context.selectedImageIndices || [0];
+
   for (const product of products) {
     if (product.images?.length) {
-      images.push(product.images[0]);
+      // 根据选中的索引获取图片
+      for (const index of selectedIndices) {
+        if (index < product.images.length) {
+          images.push(product.images[index]);
+        }
+      }
     }
   }
   return images;

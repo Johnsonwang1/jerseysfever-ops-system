@@ -13,6 +13,7 @@ const CustomersPage = lazy(() => import('./pages/CustomersPage').then(m => ({ de
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const AdCreativeListPage = lazy(() => import('./pages/AdCreativeListPage').then(m => ({ default: m.AdCreativeListPage })));
 const AdCreativePage = lazy(() => import('./pages/AdCreativePage').then(m => ({ default: m.AdCreativePage })));
+const TrendingPage = lazy(() => import('./pages/TrendingPage').then(m => ({ default: m.TrendingPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then(m => ({ default: m.UsersPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -89,6 +90,7 @@ function AppRoutes() {
           <Route path="orders" element={<OrdersPage />} />
           {/* 仅管理员可访问 */}
           <Route path="customers" element={<RoleProtectedRoute allowedRoles={['admin']}><CustomersPage /></RoleProtectedRoute>} />
+          <Route path="trending" element={<RoleProtectedRoute allowedRoles={['admin']}><TrendingPage /></RoleProtectedRoute>} />
           <Route path="analytics" element={<RoleProtectedRoute allowedRoles={['admin']}><AnalyticsPage /></RoleProtectedRoute>} />
           <Route path="ad-creative" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativeListPage /></RoleProtectedRoute>} />
           <Route path="ad-creative/new" element={<RoleProtectedRoute allowedRoles={['admin']}><AdCreativePage /></RoleProtectedRoute>} />

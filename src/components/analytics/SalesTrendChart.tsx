@@ -19,7 +19,7 @@ interface SalesTrendChartProps {
   selectedSites?: SiteKey[];  // 当前选中的站点，用于按国家匹配广告花费
 }
 
-type MetricKey = 'revenue' | 'roas' | 'netProfit' | 'netProfitRate';
+type MetricKey = 'revenue' | 'roas' | 'netProfit' | 'netProfitRate' | 'orderCount' | 'adSpend' | 'aov';
 
 export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTrendChartProps) {
   const [activeMetric, setActiveMetric] = useState<MetricKey>('netProfit');
@@ -65,6 +65,9 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
     // ROAS = 净收入 / 广告费
     const salesRoas = adSpend > 0 ? netRevenue / adSpend : 0;
 
+    // AOV = 净收入 / 订单数
+    const aov = day.orderCount > 0 ? netRevenue / day.orderCount : 0;
+
     return {
       date: day.date,
       revenue: netRevenue,  // 显示净收入
@@ -78,6 +81,7 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
       netProfit,
       netProfitRate,
       salesRoas,
+      aov,
     };
   });
 
@@ -89,6 +93,9 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
       case 'roas': return d.salesRoas;
       case 'netProfit': return d.netProfit;
       case 'netProfitRate': return d.netProfitRate;
+      case 'orderCount': return d.orderCount;
+      case 'adSpend': return d.adSpend;
+      case 'aov': return d.aov;
       default: return d.netProfit;
     }
   };
@@ -99,6 +106,9 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
       case 'roas': return `${v.toFixed(2)}x`;
       case 'netProfit': return `$${Math.round(v).toLocaleString()}`;
       case 'netProfitRate': return `${v.toFixed(1)}%`;
+      case 'orderCount': return `${Math.round(v)}单`;
+      case 'adSpend': return `$${Math.round(v).toLocaleString()}`;
+      case 'aov': return `$${v.toFixed(0)}`;
       default: return `$${Math.round(v).toLocaleString()}`;
     }
   };
@@ -148,17 +158,49 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
           >
             销售额
           </button>
+          <button
+            onClick={() => setActiveMetric('orderCount')}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+              activeMetric === 'orderCount'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            订单量
+          </button>
+          <button
+            onClick={() => setActiveMetric('aov')}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+              activeMetric === 'aov'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            AOV
+          </button>
           {hasAdsData && (
-            <button
-              onClick={() => setActiveMetric('roas')}
-              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                activeMetric === 'roas'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              ROAS
-            </button>
+            <>
+              <button
+                onClick={() => setActiveMetric('adSpend')}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  activeMetric === 'adSpend'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                花费
+              </button>
+              <button
+                onClick={() => setActiveMetric('roas')}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  activeMetric === 'roas'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                ROAS
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -208,6 +250,12 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
                   barColor = day.salesRoas >= 2 ? 'bg-emerald-500' : day.salesRoas >= 1 ? 'bg-amber-500' : day.salesRoas > 0 ? 'bg-red-400' : 'bg-gray-300';
                 } else if (activeMetric === 'netProfit' || activeMetric === 'netProfitRate') {
                   barColor = value >= 0 ? 'bg-emerald-500' : 'bg-red-500';
+                } else if (activeMetric === 'orderCount') {
+                  barColor = 'bg-blue-500';
+                } else if (activeMetric === 'adSpend') {
+                  barColor = 'bg-purple-500';
+                } else if (activeMetric === 'aov') {
+                  barColor = 'bg-cyan-500';
                 }
 
                 return (
@@ -229,6 +277,7 @@ export function SalesTrendChart({ salesData, adsData, selectedSites }: SalesTren
                           <div>毛收入: ${Math.round(day.grossRevenue).toLocaleString()}</div>
                           <div className="text-red-300">退款: -${Math.round(day.refunds).toLocaleString()}</div>
                           <div>净收入: ${Math.round(day.revenue).toLocaleString()}</div>
+                          <div className="text-cyan-300">订单: {day.orderCount}单 · AOV: ${day.aov.toFixed(0)}</div>
                           <div className="border-t border-gray-600 my-1 pt-1">
                             成本: ${Math.round(day.cost).toLocaleString()}
                           </div>

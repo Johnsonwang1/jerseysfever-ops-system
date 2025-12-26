@@ -3,27 +3,43 @@
  * 支持新建和编辑已有广告创作
  */
 
-import { useState, useCallback, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Palette, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { Palette, ArrowLeft, CheckCircle2, Copy, Download } from 'lucide-react';
 import { AIChatPanel } from '@/components/ad-creative/AIChatPanel';
 import { ProductContextBar } from '@/components/ad-creative/ProductContextBar';
 import { SiteExportDialog } from '@/components/ad-creative/SiteExportDialog';
 import { ProductSelector } from '@/components/ad-creative/ProductSelector';
 import { useProduct } from '@/hooks/useProducts';
 import { useAdCreative, useSaveAdCreative } from '@/hooks/useAdCreatives';
+import { downloadImage } from '@/lib/ai-image';
 import type { AdAspectRatio, AdProductContext } from '@/lib/ad-creative/types';
 
 export function AdCreativePage() {
   const { id, sku } = useParams<{ id?: string; sku?: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const isEditMode = !!id && id !== 'new';
 
-  // 加载已有创作（编辑模式）
-  const { data: existingCreative } = useAdCreative(isEditMode ? id : null);
+  // 模板复用模式：从 URL 参数获取 templateId
+  const templateId = searchParams.get('templateId');
+  const templateSku = searchParams.get('sku');
+  const isTemplateMode = !!templateId;
 
-  // 如果有 SKU 参数，加载商品数据
-  const { data: product } = useProduct(sku || null);
+  // 加载已有创作（编辑模式）或模板（模板模式）
+  const { data: existingCreative } = useAdCreative(isEditMode ? id : null);
+  const { data: templateCreative } = useAdCreative(isTemplateMode ? templateId : null);
+
+  // 确定要加载的 SKU：
+  // 1. 模板模式：使用 URL 的 sku 参数（新商品）
+  // 2. 编辑模式：使用已保存创作的 SKU
+  // 3. 新建模式：使用 URL 的 sku 参数
+  const productSku = useMemo(() => {
+    if (isTemplateMode) return templateSku;
+    if (isEditMode) return existingCreative?.sku || null;
+    return sku || null;
+  }, [isTemplateMode, templateSku, isEditMode, existingCreative?.sku, sku]);
+  const { data: product } = useProduct(productSku);
 
   // 保存 mutation
   const saveMutation = useSaveAdCreative();
@@ -41,17 +57,25 @@ export function AdCreativePage() {
   // 当前选中的商品上下文（支持多商品）
   const [productContexts, setProductContexts] = useState<AdProductContext[]>([]);
 
-  // 加载已有创作数据
+  // 加载已有创作数据（编辑模式）
   useEffect(() => {
-    if (existingCreative) {
+    if (existingCreative && isEditMode) {
       setAspectRatio(existingCreative.aspect_ratio);
       setConfirmedImageUrl(existingCreative.image_url);
       setCurrentCreativeId(existingCreative.id);
       if (existingCreative.prompt) setLastPrompt(existingCreative.prompt);
       if (existingCreative.model) setLastModel(existingCreative.model);
-      // TODO: 加载关联的商品信息
+      // 商品信息通过 productSku -> useProduct -> product useEffect 链路自动加载
     }
-  }, [existingCreative]);
+  }, [existingCreative, isEditMode]);
+
+  // 模板模式：只继承尺寸，不继承其他数据（新创作）
+  useEffect(() => {
+    if (templateCreative && isTemplateMode) {
+      setAspectRatio(templateCreative.aspect_ratio);
+      // 不设置 confirmedImageUrl、currentCreativeId 等，因为这是新创作
+    }
+  }, [templateCreative, isTemplateMode]);
 
   // 当 URL 参数的商品加载完成后，设置商品上下文
   useEffect(() => {
@@ -161,8 +185,14 @@ export function AdCreativePage() {
           <div className="flex items-center gap-2">
             <Palette className="w-5 h-5 text-purple-600" />
             <h1 className="text-lg font-semibold text-gray-900">
-              {isEditMode ? '编辑广告图' : '新建广告图'}
+              {isEditMode ? '编辑广告图' : isTemplateMode ? '套用模板' : '新建广告图'}
             </h1>
+            {isTemplateMode && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
+                <Copy className="w-3 h-3" />
+                基于模板
+              </span>
+            )}
           </div>
         </div>
 
@@ -195,7 +225,19 @@ export function AdCreativePage() {
                 alt="Confirmed"
                 className="w-full h-auto rounded-lg shadow-xl"
               />
-              <div className="absolute bottom-4 right-4">
+              <div className="absolute bottom-4 right-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    const filename = productContexts[0] 
+                      ? `ad-${productContexts[0].sku}-${aspectRatio}.png`
+                      : `ad-creative-${Date.now()}.png`;
+                    downloadImage(confirmedImageUrl!, filename);
+                  }}
+                  className="p-2 bg-white/90 text-gray-700 rounded-lg shadow-lg hover:bg-white transition-colors"
+                  title="下载图片"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
                 <button
                   onClick={() => setShowSiteExportDialog(true)}
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 transition-colors"
@@ -235,6 +277,12 @@ export function AdCreativePage() {
             onSaveDraft={handleSaveDraft}
             onConfirmComplete={handleConfirmComplete}
             onSiteExport={handleSiteExport}
+            initialSelectedImageUrl={
+              isEditMode ? existingCreative?.image_url : 
+              isTemplateMode ? templateCreative?.image_url : 
+              null
+            }
+            isTemplateMode={isTemplateMode}
           />
         </div>
       </div>

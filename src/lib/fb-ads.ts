@@ -761,3 +761,120 @@ export async function getRoasData(params: {
     byCountry,
   }
 }
+
+// ============ 产品广告数据 ============
+
+// 国家到站点的映射
+export const COUNTRY_TO_SITE_MAP: Record<string, string> = {
+  DE: 'de',
+  FR: 'fr',
+  GB: 'uk',
+  US: 'com',
+}
+
+export interface ProductAdPerformance {
+  sku: string
+  product_name: string
+  image: string | null
+  spend: number
+  impressions: number
+  clicks: number
+  cpc: number
+  cpm: number
+  ctr: number
+  // 销售数据
+  revenue: number
+  quantity: number      // 销量（件数）
+  order_count: number   // 订单数
+  roas: number
+}
+
+// 获取产品广告数据（维度：SKU，筛选：日期、国家）
+// 关联 products 表获取图片，关联 orders 表获取销售数据
+export async function getProductAdsPerformance(params: {
+  dateFrom: string
+  dateTo: string
+  country?: string
+  sortBy?: 'spend' | 'cpc' | 'ctr' | 'impressions' | 'clicks' | 'revenue' | 'quantity' | 'order_count' | 'roas'
+  sortOrder?: 'asc' | 'desc'
+  limit?: number
+}): Promise<ProductAdPerformance[]> {
+  const { dateFrom, dateTo, country, sortBy = 'spend', sortOrder = 'desc', limit = 500 } = params
+
+  // 直接调用后端 RPC 函数，所有聚合和关联都在数据库完成
+  const { data, error } = await supabase.rpc('get_product_ads_performance', {
+    p_date_from: dateFrom,
+    p_date_to: dateTo,
+    p_country: country === 'all' ? null : country
+  })
+  
+  if (error) throw error
+
+  // 转换为前端格式
+  const result: ProductAdPerformance[] = (data || []).map((row: any) => ({
+    sku: row.sku,
+    product_name: row.product_name || row.sku,
+    image: row.image_url || null,
+    spend: Number(row.spend) || 0,
+    impressions: Number(row.impressions) || 0,
+    clicks: Number(row.clicks) || 0,
+    cpc: Number(row.cpc) || 0,
+    cpm: 0,
+    ctr: Number(row.ctr) || 0,
+    revenue: Number(row.revenue) || 0,
+    quantity: Number(row.quantity) || 0,       // 销量
+    order_count: Number(row.order_count) || 0, // 订单数
+    roas: Number(row.roas) || 0,
+  }))
+
+  // 前端排序（数据库已按 spend DESC 排序，如果需要其他排序再处理）
+  if (sortBy !== 'spend' || sortOrder !== 'desc') {
+    result.sort((a, b) => {
+      const aVal = a[sortBy] ?? 0
+      const bVal = b[sortBy] ?? 0
+      return sortOrder === 'desc' ? bVal - aVal : aVal - bVal
+    })
+  }
+
+  return result.slice(0, limit)
+}
+
+// 获取产品广告汇总统计
+export async function getProductAdsSummary(params: {
+  dateFrom: string
+  dateTo: string
+  country?: string
+}): Promise<{
+  totalSpend: number
+  totalImpressions: number
+  totalClicks: number
+  totalRevenue: number
+  avgCpc: number
+  avgCtr: number
+  avgRoas: number
+  productCount: number
+}> {
+  const { dateFrom, dateTo, country } = params
+
+  // 直接调用后端 RPC 函数，所有聚合都在数据库完成
+  const { data, error } = await supabase.rpc('get_product_ads_summary', {
+    p_date_from: dateFrom,
+    p_date_to: dateTo,
+    p_country: country === 'all' ? null : country
+  })
+  
+  if (error) throw error
+
+  const summary = data?.[0] || {}
+
+  return {
+    totalSpend: Number(summary.total_spend) || 0,
+    totalImpressions: Number(summary.total_impressions) || 0,
+    totalClicks: Number(summary.total_clicks) || 0,
+    totalRevenue: Number(summary.total_revenue) || 0,
+    avgCpc: Number(summary.avg_cpc) || 0,
+    avgCtr: Number(summary.avg_ctr) || 0,
+    avgRoas: Number(summary.avg_roas) || 0,
+    productCount: Number(summary.product_count) || 0,
+  }
+}

@@ -17,7 +17,7 @@ import {
   getImageContext,
   generateMultipleImages,
 } from '@/lib/ad-creative/ai-chat';
-import { uploadImageToStorage } from '@/lib/supabase';
+import { uploadImageToStorage, getBrandLogoUrl } from '@/lib/supabase';
 
 // 生成唯一 ID
 function generateId(): string {
@@ -28,18 +28,22 @@ interface UseAIChatOptions {
   products: AdProductContext[];
   aspectRatio: AdAspectRatio;
   onImageSelect?: (imageUrl: string) => void;
+  /** 是否为模板复用模式 */
+  isTemplateMode?: boolean;
 }
 
-export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOptions) {
-  // 对话消息列表
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome',
-      role: 'system',
-      content: '我是你的广告图设计助手！告诉我你想要什么风格的广告图，我会为你生成多个设计方案。',
-      timestamp: new Date(),
-    },
-  ]);
+export function useAIChat({ products, aspectRatio, onImageSelect, isTemplateMode = false }: UseAIChatOptions) {
+  // 对话消息列表 - 模板模式使用不同的欢迎语
+  const getWelcomeMessage = (): ChatMessage => ({
+    id: 'welcome',
+    role: 'system',
+    content: isTemplateMode 
+      ? '已选择参考模板图，我会基于它的风格为新商品生成广告图。直接点击发送按钮生成相似风格的图，或输入你的调整需求。'
+      : '我是你的广告图设计助手！告诉我你想要什么风格的广告图，我会为你生成多个设计方案。',
+    timestamp: new Date(),
+  });
+
+  const [messages, setMessages] = useState<ChatMessage[]>([getWelcomeMessage()]);
 
   // AI 上下文设置
   const [aiContext, setAIContext] = useState<AIContext>(DEFAULT_AI_CONTEXT);
@@ -89,12 +93,13 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
     setIsGenerating(true);
 
     try {
-      // 构建 prompt（支持多商品）
+      // 构建 prompt（支持多商品 + 模板模式）
       const prompt = buildPrompt(
         content,
         products,
         aiContext,
-        conversationHistoryRef.current
+        conversationHistoryRef.current,
+        isTemplateMode && !!selectedImageUrl // 只有在模板模式且有选中图时才启用
       );
 
       // 用户上传的参考图片：先转存到 Storage 获取 URL
@@ -146,10 +151,15 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
       const productImages = getImageContext(products, aiContext);
       images = [...images, ...productImages];
 
-      // 如果勾选了 Logo，添加 Logo 图片
+      // 如果勾选了 Logo，添加 Logo 图片（从 Supabase Storage 获取）
       if (aiContext.includeLogo) {
-        const logoUrl = `${window.location.origin}/logo.png`;
-        images.push(logoUrl);
+        try {
+          const logoUrl = await getBrandLogoUrl();
+          images.push(logoUrl);
+          console.log('Logo URL added:', logoUrl);
+        } catch (err) {
+          console.error('获取 Logo URL 失败:', err);
+        }
       }
 
       console.log('Final images array:', images);
@@ -254,7 +264,7 @@ export function useAIChat({ products, aspectRatio, onImageSelect }: UseAIChatOpt
   }, []);
 
   // 更新 AI 上下文
-  const updateContext = useCallback((key: keyof AIContext, value: boolean) => {
+  const updateContext = useCallback(<K extends keyof AIContext>(key: K, value: AIContext[K]) => {
     setAIContext(prev => ({ ...prev, [key]: value }));
   }, []);
 

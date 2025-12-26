@@ -13,6 +13,8 @@ import {
   syncFbAdsData,
   getLastSyncTime,
   getCampaignDailyTrend,
+  getProductAdsPerformance,
+  getProductAdsSummary,
   type FbAdAccount,
   type FbAdsSummary,
   type CampaignPerformance,
@@ -20,6 +22,7 @@ import {
   type ExchangeRate,
   type FbSyncLog,
   type CampaignDailyData,
+  type ProductAdPerformance,
 } from '@/lib/fb-ads'
 
 // Query keys
@@ -39,6 +42,11 @@ export const fbAdsKeys = {
   exchangeRates: () => [...fbAdsKeys.all, 'exchange-rates'] as const,
   syncLogs: () => [...fbAdsKeys.all, 'sync-logs'] as const,
   lastSync: () => [...fbAdsKeys.all, 'last-sync'] as const,
+  // 产品广告数据
+  productAds: (params: { dateFrom: string; dateTo: string; country?: string }) =>
+    [...fbAdsKeys.all, 'product-ads', params] as const,
+  productAdsSummary: (params: { dateFrom: string; dateTo: string; country?: string }) =>
+    [...fbAdsKeys.all, 'product-ads-summary', params] as const,
 }
 
 // 广告账户列表
@@ -229,4 +237,43 @@ export function useFbAdsAnalytics(params: {
       countryQuery.refetch()
     },
   }
+}
+
+// ============ 产品广告数据 Hooks ============
+
+// 产品广告表现数据
+export function useProductAdsPerformance(params: {
+  dateFrom: string
+  dateTo: string
+  country?: string
+  sortBy?: 'spend' | 'cpc' | 'ctr' | 'impressions' | 'clicks'
+  sortOrder?: 'asc' | 'desc'
+  limit?: number
+  enabled?: boolean
+}) {
+  const { dateFrom, dateTo, country, sortBy, sortOrder, limit, enabled = true } = params
+
+  return useQuery<ProductAdPerformance[], Error>({
+    queryKey: fbAdsKeys.productAds({ dateFrom, dateTo, country }),
+    queryFn: () => getProductAdsPerformance({ dateFrom, dateTo, country, sortBy, sortOrder, limit }),
+    staleTime: 60 * 1000, // 1 minute
+    enabled: enabled && !!dateFrom && !!dateTo,
+  })
+}
+
+// 产品广告汇总
+export function useProductAdsSummary(params: {
+  dateFrom: string
+  dateTo: string
+  country?: string
+  enabled?: boolean
+}) {
+  const { dateFrom, dateTo, country, enabled = true } = params
+
+  return useQuery({
+    queryKey: fbAdsKeys.productAdsSummary({ dateFrom, dateTo, country }),
+    queryFn: () => getProductAdsSummary({ dateFrom, dateTo, country }),
+    staleTime: 60 * 1000,
+    enabled: enabled && !!dateFrom && !!dateTo,
+  })
 }

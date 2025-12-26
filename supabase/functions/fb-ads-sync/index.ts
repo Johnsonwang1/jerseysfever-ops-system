@@ -433,6 +433,211 @@ async function getDailyTrend(supabase: any, dateFrom: string, dateTo: string, ac
   return Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date))
 }
 
+// ==================== 产品级别广告数据 ====================
+
+// 从 BigQuery 查询产品级别广告数据
+// 维度: date, country (从 campaign_name 提取), SKU (从 product_id 提取并聚合)
+// 在 BQ 层面完成 SKU 提取和聚合，避免前端处理大量数据
+async function queryProductAdsFromBQ(accessToken: string, dateFrom: string, dateTo: string) {
+  const query = `
+    WITH raw_data AS (
+      SELECT
+        date_start,
+        product_id,
+        -- 从 campaign_name 提取国家: "ABO - 20251215 - UK - All" 或 "ASC - 20251211 - DE - catelog"
+        UPPER(REGEXP_EXTRACT(campaign_name, r'(?:ABO|ASC)\\s*-\\s*\\d+\\s*-\\s*(\\w+)\\s*-')) as country_raw,
+        CAST(spend AS FLOAT64) as spend,
+        CAST(impressions AS INT64) as impressions,
+        CAST(clicks AS INT64) as clicks,
+        CAST(inline_link_clicks AS INT64) as inline_link_clicks,
+        account_currency
+      FROM \`${BQ_PROJECT_ID}.facebook.newads_insights_action_product_id\`
+      WHERE TIMESTAMP_TRUNC(_airbyte_extracted_at, DAY) >= TIMESTAMP('${dateFrom}')
+        AND date_start >= '${dateFrom}'
+        AND date_start <= '${dateTo}'
+        AND spend > 0
+        AND product_id IS NOT NULL
+    ),
+    with_sku AS (
+      SELECT
+        date_start,
+        -- 标准化国家代码
+        CASE 
+          WHEN country_raw IN ('UK', 'GB') THEN 'GB'
+          WHEN country_raw = 'DE' THEN 'DE'
+          WHEN country_raw = 'FR' THEN 'FR'
+          WHEN country_raw IN ('US', 'COM') THEN 'US'
+          ELSE COALESCE(country_raw, 'unknown')
+        END as country,
+        -- 提取 SKU: "SKU_12345, Name" -> "SKU" (去掉变体ID后缀和尺码后缀)
+        REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            SPLIT(product_id, ', ')[SAFE_OFFSET(0)],  -- 取逗号前部分
+            r'_\\d+$', ''  -- 去掉 _数字 后缀
+          ),
+          r'-(XS|S|M|L|XL|2XL|3XL|4XL|5XL)$', ''  -- 去掉尺码后缀
+        ) as sku,
+        -- 提取商品名称
+        ARRAY_TO_STRING(ARRAY(SELECT x FROM UNNEST(SPLIT(product_id, ', ')) AS x WITH OFFSET WHERE OFFSET > 0), ', ') as product_name,
+        spend,
+        impressions,
+        clicks,
+        inline_link_clicks,
+        account_currency
+      FROM raw_data
+    )
+    SELECT
+      date_start as date,
+      country,
+      sku,
+      ANY_VALUE(product_name) as product_name,
+      SUM(spend) as spend,
+      SUM(impressions) as impressions,
+      SUM(clicks) as clicks,
+      SUM(inline_link_clicks) as inline_link_clicks,
+      ANY_VALUE(account_currency) as currency
+    FROM with_sku
+    WHERE sku IS NOT NULL AND sku != ''
+    GROUP BY date_start, country, sku
+    ORDER BY date_start DESC, spend DESC
+  `
+
+  return queryBigQuery(accessToken, query)
+}
+
+// 解析 product_id 提取父 SKU（去掉变体ID和尺码后缀）
+// 格式: "SKU_变体ID, Product Name"
+// 例如: "G-WC26-HOM-N4H19_81517, Deutschland Heimtrikot" -> sku: "G-WC26-HOM-N4H19"
+// 例如: "199-RET-HOM-RET-42123-S_12345, Retro Jersey" -> sku: "199-RET-HOM-RET-42123"
+function parseProductId(productId: string): { sku: string; name: string } {
+  if (!productId) return { sku: '', name: '' }
+  
+  const parts = productId.split(', ')
+  if (parts.length >= 2) {
+    let sku = parts[0].trim()
+    const name = parts.slice(1).join(', ').trim()
+    
+    // 1. 去掉变体ID后缀: SKU_12345 -> SKU
+    const variantMatch = sku.match(/^(.+?)_\d+$/)
+    if (variantMatch) {
+      sku = variantMatch[1]
+    }
+    
+    // 2. 去掉尺码后缀: SKU-XL -> SKU, SKU-2XL -> SKU
+    // 尺码模式: -XS, -S, -M, -L, -XL, -2XL, -3XL, -4XL, -5XL (末尾)
+    const sizeMatch = sku.match(/^(.+?)-(?:XS|S|M|L|XL|2XL|3XL|4XL|5XL)$/i)
+    if (sizeMatch) {
+      sku = sizeMatch[1]
+    }
+    
+    return { sku, name }
+  }
+  
+  return { sku: productId, name: '' }
+}
+
+// 同步产品广告数据到 Supabase
+// 维度: date, country, sku (BQ 已按 SKU 聚合)
+async function syncProductAdsToSupabase(supabase: any, rows: any[]) {
+  let synced = 0
+  const batchSize = 100
+
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize)
+
+    const records = batch.map((row: any) => {
+      const spend = parseFloat(row.spend) || 0
+      const impressions = parseInt(row.impressions) || 0
+      const clicks = parseInt(row.clicks) || 0
+      
+      // 计算 CPC、CPM、CTR
+      const cpc = clicks > 0 ? spend / clicks : null
+      const cpm = impressions > 0 ? (spend / impressions) * 1000 : null
+      const ctr = impressions > 0 ? (clicks / impressions) * 100 : null
+      
+      return {
+        date: row.date,
+        country: row.country || 'unknown',
+        sku: row.sku,  // BQ 已提取并聚合
+        product_name: row.product_name || '',
+        spend,
+        impressions,
+        clicks,
+        cpc,
+        cpm,
+        ctr,
+        inline_link_clicks: parseInt(row.inline_link_clicks) || 0,
+        currency: row.currency || 'USD',
+        synced_at: new Date().toISOString(),
+      }
+    })
+
+    const { error } = await supabase
+      .from('fb_ads_product_daily')
+      .upsert(records, {
+        onConflict: 'date,country,sku',  // 主键改为 SKU
+        ignoreDuplicates: false,
+      })
+
+    if (error) {
+      console.error('Product ads batch upsert error:', error)
+      throw error
+    }
+
+    synced += batch.length
+    console.log(`Synced product ads ${synced}/${rows.length} records`)
+  }
+
+  return synced
+}
+
+// 获取产品广告汇总数据
+async function getProductAdsSummary(supabase: any, dateFrom: string, dateTo: string, skus?: string[]) {
+  let query = supabase
+    .from('fb_ads_product_daily')
+    .select('sku, product_name, spend, impressions, clicks, cpc, ctr')
+    .gte('date', dateFrom)
+    .lte('date', dateTo)
+
+  if (skus && skus.length > 0) {
+    query = query.in('sku', skus)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+
+  // 按 SKU 聚合
+  const skuMap = new Map<string, any>()
+
+  for (const row of data || []) {
+    const sku = row.sku
+    if (!sku) continue
+    
+    if (!skuMap.has(sku)) {
+      skuMap.set(sku, {
+        sku,
+        product_name: row.product_name,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+      })
+    }
+    const s = skuMap.get(sku)!
+    s.spend += Number(row.spend) || 0
+    s.impressions += row.impressions || 0
+    s.clicks += row.clicks || 0
+  }
+
+  // 计算 CPC、CTR
+  return Array.from(skuMap.values())
+    .map(s => ({
+      ...s,
+      cpc: s.clicks > 0 ? s.spend / s.clicks : 0,
+      ctr: s.impressions > 0 ? (s.clicks / s.impressions) * 100 : 0,
+    }))
+    .sort((a, b) => b.spend - a.spend)
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -532,6 +737,43 @@ Deno.serve(async (req) => {
       case 'sync-logs': {
         const { data, error } = await supabase.from('fb_sync_logs').select('*').order('started_at', { ascending: false }).limit(10)
         if (error) throw error
+        return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
+
+      // ==================== 产品广告数据 ====================
+      case 'sync-products': {
+        let { date_from, date_to } = params
+
+        // 默认从 2025-12-15 开始
+        if (!date_from) {
+          date_from = '2025-12-15'
+        }
+        if (!date_to) {
+          date_to = new Date().toISOString().split('T')[0]
+        }
+
+        console.log(`Syncing product ads from ${date_from} to ${date_to}...`)
+
+        // 获取 Google Access Token
+        const accessToken = await getGoogleAccessToken()
+
+        // 从 BigQuery 查询产品广告数据
+        console.log('Querying BigQuery for product ads...')
+        const rows = await queryProductAdsFromBQ(accessToken, date_from, date_to)
+        console.log(`Found ${rows.length} product ad rows`)
+
+        // 同步到 Supabase
+        const synced = await syncProductAdsToSupabase(supabase, rows)
+
+        return new Response(
+          JSON.stringify({ success: true, records_synced: synced, date_from, date_to }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      case 'product-ads-summary': {
+        const { date_from, date_to, skus } = params
+        const data = await getProductAdsSummary(supabase, date_from, date_to, skus)
         return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
       }
 

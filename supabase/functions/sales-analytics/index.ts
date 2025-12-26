@@ -167,20 +167,39 @@ Deno.serve(async (req) => {
       return config.price_per_kg * DEFAULT_JERSEY_WEIGHT_KG * totalQuantity + config.registration_fee;
     };
 
-    // 3. 查询订单数据
+    // 3. 查询订单数据（分页获取所有数据，Supabase 默认 limit 1000）
     const dateToEnd = `${dateTo}T23:59:59.999Z`;
-    let query = supabase
-      .from("orders")
-      .select("*")
-      .gte("date_created", dateFrom)
-      .lte("date_created", dateToEnd);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allOrders: any[] = [];
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let hasMore = true;
 
-    if (sites && sites.length > 0) {
-      query = query.in("site", sites);
+    while (hasMore) {
+      let query = supabase
+        .from("orders")
+        .select("*")
+        .gte("date_created", dateFrom)
+        .lte("date_created", dateToEnd)
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (sites && sites.length > 0) {
+        query = query.in("site", sites);
+      }
+
+      const { data: pageOrders, error: pageError } = await query;
+      if (pageError) throw pageError;
+
+      if (pageOrders && pageOrders.length > 0) {
+        allOrders.push(...pageOrders);
+        offset += PAGE_SIZE;
+        hasMore = pageOrders.length === PAGE_SIZE;
+      } else {
+        hasMore = false;
+      }
     }
 
-    const { data: orders, error: ordersError } = await query;
-    if (ordersError) throw ordersError;
+    const orders = allOrders;
 
     // 4. 收集 SKU 并查询成本
     const allSkus = new Set<string>();

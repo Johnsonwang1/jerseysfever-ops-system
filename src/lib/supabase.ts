@@ -126,6 +126,75 @@ function getMimeType(filename: string): string {
   return mimeTypes[ext || ''] || 'image/jpeg';
 }
 
+// ========== Logo URL 管理 ==========
+// Logo 在 Storage 中的固定路径
+const LOGO_STORAGE_PATH = 'brand/jerseysfever-logo.png';
+// 缓存 Logo URL（避免重复上传）
+let cachedLogoUrl: string | null = null;
+
+/**
+ * 获取 Logo 的公开 URL
+ * 如果 Logo 还没上传到 Storage，会自动从 public/logo.png 获取并上传
+ */
+export async function getBrandLogoUrl(): Promise<string> {
+  // 如果有缓存，直接返回
+  if (cachedLogoUrl) {
+    return cachedLogoUrl;
+  }
+
+  // 检查 Storage 中是否已存在 Logo
+  const { data: existingFile } = supabase.storage
+    .from('product-images')
+    .getPublicUrl(LOGO_STORAGE_PATH);
+  
+  // 尝试 HEAD 请求检查文件是否真的存在
+  try {
+    const response = await fetch(existingFile.publicUrl, { method: 'HEAD' });
+    if (response.ok) {
+      cachedLogoUrl = existingFile.publicUrl;
+      return cachedLogoUrl;
+    }
+  } catch {
+    // 文件不存在，继续上传
+  }
+
+  // Logo 不存在，从 public/logo.png 获取并上传
+  try {
+    const logoResponse = await fetch('/logo.png');
+    if (!logoResponse.ok) {
+      throw new Error('无法加载本地 Logo 文件');
+    }
+    
+    const logoBlob = await logoResponse.blob();
+    
+    // 上传到 Storage
+    const { error: uploadError } = await supabase.storage
+      .from('product-images')
+      .upload(LOGO_STORAGE_PATH, logoBlob, {
+        contentType: 'image/png',
+        upsert: true, // 如果存在就覆盖
+      });
+
+    if (uploadError) {
+      console.error('Logo 上传失败:', uploadError);
+      throw uploadError;
+    }
+
+    // 获取公开 URL
+    const { data: urlData } = supabase.storage
+      .from('product-images')
+      .getPublicUrl(LOGO_STORAGE_PATH);
+
+    cachedLogoUrl = urlData.publicUrl;
+    console.log('Logo 已上传到 Storage:', cachedLogoUrl);
+    return cachedLogoUrl;
+  } catch (error) {
+    console.error('获取/上传 Logo 失败:', error);
+    // 返回本地 URL 作为 fallback（虽然 AI 可能无法访问）
+    return `${window.location.origin}/logo.png`;
+  }
+}
+
 // 上传图片到 Supabase Storage，返回公开 URL
 export async function uploadImageToStorage(base64Data: string, filename: string): Promise<string> {
   // 将 base64 转换为 Blob

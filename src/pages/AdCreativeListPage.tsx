@@ -13,8 +13,13 @@ import {
   Clock,
   Trash2,
   Loader2,
+  Copy,
+  Download,
 } from 'lucide-react';
-import { useAdCreatives, useDeleteAdCreative, type AdCreativeStatus } from '@/hooks/useAdCreatives';
+import { useAdCreatives, useDeleteAdCreative, type AdCreativeStatus, type AdCreative } from '@/hooks/useAdCreatives';
+import { ProductSelector } from '@/components/ad-creative/ProductSelector';
+import { downloadImage } from '@/lib/ai-image';
+import type { AdProductContext } from '@/lib/ad-creative/types';
 import { formatDistanceToNow } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
@@ -25,6 +30,8 @@ export function AdCreativeListPage() {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  // 模板套用相关状态
+  const [templateForApply, setTemplateForApply] = useState<AdCreative | null>(null);
 
   const { data: creatives, isLoading } = useAdCreatives({
     status: filterStatus,
@@ -42,6 +49,20 @@ export function AdCreativeListPage() {
     } finally {
       setDeleteId(null);
     }
+  };
+
+  // 处理套用到其他商品
+  const handleApplyTemplate = (creative: AdCreative) => {
+    setTemplateForApply(creative);
+  };
+
+  // 选择商品后跳转
+  const handleSelectProductForTemplate = (products: AdProductContext[]) => {
+    if (templateForApply && products.length > 0) {
+      const sku = products[0].sku;
+      navigate(`/ad-creative/new?templateId=${templateForApply.id}&sku=${sku}`);
+    }
+    setTemplateForApply(null);
   };
 
   // 状态筛选按钮
@@ -157,7 +178,37 @@ export function AdCreativeListPage() {
                   )}
 
                   {/* 悬停操作 */}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                    {/* 下载 */}
+                    {creative.image_url && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const filename = creative.sku 
+                            ? `ad-${creative.sku}-${creative.aspect_ratio}.png`
+                            : `ad-creative-${creative.id}.png`;
+                          downloadImage(creative.image_url!, filename);
+                        }}
+                        className="p-2 bg-white/90 text-gray-700 rounded-lg hover:bg-white transition-colors"
+                        title="下载图片"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    )}
+                    {/* 套用到其他商品 */}
+                    {creative.image_url && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleApplyTemplate(creative);
+                        }}
+                        className="p-2 bg-white/90 text-purple-600 rounded-lg hover:bg-white transition-colors"
+                        title="套用到其他商品"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    )}
+                    {/* 删除 */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -219,6 +270,16 @@ export function AdCreativeListPage() {
           </div>
         )}
       </div>
+
+      {/* 模板套用 - 商品选择器 */}
+      {templateForApply && (
+        <ProductSelector
+          currentSkus={[]}
+          multiSelect={false}
+          onSelect={handleSelectProductForTemplate}
+          onClose={() => setTemplateForApply(null)}
+        />
+      )}
     </div>
   );
 }

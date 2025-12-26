@@ -110,10 +110,21 @@ export function CanvasEditor({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!fabricRef.current) return;
 
+      // 忽略来自输入框的键盘事件
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
       // Delete 键删除选中对象
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const activeObjects = fabricRef.current.getActiveObjects();
         if (activeObjects.length > 0) {
+          e.preventDefault(); // 只在有选中对象时阻止默认行为
           activeObjects.forEach(obj => fabricRef.current?.remove(obj));
           fabricRef.current.discardActiveObject();
           fabricRef.current.renderAll();

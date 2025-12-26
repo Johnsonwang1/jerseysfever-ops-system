@@ -223,6 +223,7 @@ export interface FbAdsMetadata {
 // AI 上下文设置
 export interface AIContext {
   includeProductImage: boolean;  // 商品图 (默认 true)
+  selectedImageIndices: number[]; // 选中的商品图片索引 (默认 [0] 即主图)
   includePrice: boolean;         // 价格信息 (默认 true)
   includeTitle: boolean;         // 商品标题 (默认 true)
   includeLogo: boolean;          // 品牌 Logo (默认 true)
@@ -231,6 +232,7 @@ export interface AIContext {
 // 默认 AI 上下文
 export const DEFAULT_AI_CONTEXT: AIContext = {
   includeProductImage: true,
+  selectedImageIndices: [0], // 默认只选主图
   includePrice: true,
   includeTitle: true,
   includeLogo: true,
